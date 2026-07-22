@@ -1,0 +1,1294 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23008066' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16' y2='16'/><path d='M11 7a4 4 0 0 1 4 4' opacity='0.45'/></svg>"
+    />
+    <title>WhyFish 质量问题分析与解决工具</title>
+    <meta name="description" content="支持树状分支、多因素分析的 AI 辅助 5 Whys 问题分析工具" />
+
+    <!-- 同步加载轻量主题初始化，确保首帧即使用用户已保存的主题。 -->
+    <script src="js/core/theme.js?v=1.0.0"></script>
+    <link rel="stylesheet" href="styles.min.css?v=a43dc6a5" />
+  </head>
+
+  <body>
+    <a href="#main" class="skip-link">跳过导航</a>
+    <div id="app">
+      <!-- Header -->
+      <header class="app-header">
+        <div class="header-left">
+          <button
+            type="button"
+            class="btn-icon mobile-menu-btn"
+            id="mobileMenuBtn"
+            title="菜单"
+            aria-label="打开导航菜单"
+            aria-expanded="false"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="M3 12h18M3 6h18M3 18h18" />
+            </svg>
+          </button>
+          <div class="header-text clickable" id="headerLogo" title="返回首页" tabindex="0" role="button">
+            <div class="header-title-row">
+              <h1 class="header-title">
+                WhyFish<span class="header-title-detail"> 质量问题分析与解决工具</span>
+              </h1>
+              <span class="beta-badge" aria-label="Beta 测试版" title="Beta 测试版">Beta</span>
+            </div>
+            <span class="header-subtitle">用 AI 协助分析和解决质量问题</span>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button
+            type="button"
+            class="btn-icon btn-header"
+            id="btnSettings"
+            title="设置"
+            aria-label="设置"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              aria-hidden="true"
+              stroke-width="2"
+            >
+              <path
+                d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+              />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+            <span>设置</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Settings Modal -->
+      <dialog class="modal-overlay" id="unifiedSettingsModal" aria-label="设置">
+        <div class="modal modal-lg unified-settings-modal">
+          <div class="modal-header">
+            <h2 class="modal-title">设置</h2>
+            <button type="button" class="btn-close" id="btnCloseUnifiedSettings" aria-label="关闭">
+              &times;
+            </button>
+          </div>
+          <div class="modal-body">
+            <section class="appearance-settings" aria-labelledby="appearanceSettingsTitle">
+              <h3 class="settings-section-title" id="appearanceSettingsTitle">外观主题</h3>
+              <p class="settings-section-desc">选择后立即生效，并自动保存在当前设备。</p>
+              <div class="theme-options" role="radiogroup" aria-label="外观主题">
+                <label class="theme-option">
+                  <input type="radio" name="ui-theme" value="emerald" />
+                  <span class="theme-option-card">
+                    <span class="theme-swatch emerald" aria-hidden="true"></span>
+                    <span class="theme-option-name">翠绿</span>
+                  </span>
+                </label>
+                <label class="theme-option">
+                  <input type="radio" name="ui-theme" value="rose" />
+                  <span class="theme-option-card">
+                    <span class="theme-swatch rose" aria-hidden="true"></span>
+                    <span class="theme-option-name">莓红</span>
+                  </span>
+                </label>
+                <label class="theme-option">
+                  <input type="radio" name="ui-theme" value="indigo" />
+                  <span class="theme-option-card">
+                    <span class="theme-swatch indigo" aria-hidden="true"></span>
+                    <span class="theme-option-name">靛蓝</span>
+                  </span>
+                </label>
+                <label class="theme-option">
+                  <input type="radio" name="ui-theme" value="mist" />
+                  <span class="theme-option-card">
+                    <span class="theme-swatch mist" aria-hidden="true"></span>
+                    <span class="theme-option-name">雾蓝</span>
+                  </span>
+                </label>
+              </div>
+              <p id="themeStatus" class="sr-only" aria-live="polite"></p>
+            </section>
+            <h3 class="settings-section-title provider-settings-title">AI 模型</h3>
+            <div class="provider-cards" id="providerCards">
+              <!-- Provider cards rendered by config.js renderProviderCards() -->
+            </div>
+          </div>
+          <div class="modal-footer justify-end">
+            <button type="button" class="btn btn-primary" id="btnSaveSettings">保存设置</button>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- Evidence Input Modal -->
+      <dialog class="modal-overlay" id="evidenceModal" aria-labelledby="evidenceModalTitle">
+        <div class="modal modal-sm">
+          <div class="modal-header">
+            <h2 id="evidenceModalTitle" class="modal-title">添加证据</h2>
+            <button type="button" class="btn-close" id="btnCloseEvidenceModal" aria-label="关闭">
+              &times;
+            </button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label for="evidenceInput">证据内容</label>
+              <textarea
+                id="evidenceInput"
+                class="input-field"
+                rows="3"
+                placeholder="输入证据/数据（如：检测报告编号、数据记录等）"
+              ></textarea>
+            </div>
+          </div>
+          <div class="modal-footer justify-end">
+            <button type="button" class="btn btn-ghost" id="btnCancelEvidence">取消</button>
+            <button type="button" class="btn btn-primary" id="btnConfirmEvidence">确认添加</button>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- Problem Picker Modal -->
+      <dialog class="modal-overlay" id="analysisMethodPicker" aria-labelledby="analysisMethodTitle">
+        <div class="modal modal-sm">
+          <div class="modal-header">
+            <h3 id="analysisMethodTitle">选择分析方法</h3>
+            <button type="button" class="btn-close" id="btnCloseMethodPicker" aria-label="关闭">
+              &times;
+            </button>
+          </div>
+          <div class="modal-body">
+            <div id="analysisMethodList" class="method-picker-list"></div>
+          </div>
+          <div class="modal-footer justify-end">
+            <button type="button" class="btn btn-ghost" id="btnCancelMethodPicker">取消</button>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog class="modal-overlay" id="problemPickerModal" aria-labelledby="problemPickerTitle">
+        <div class="modal modal-md">
+          <div class="modal-header">
+            <h3 id="problemPickerTitle">从问题库选择</h3>
+            <button type="button" class="btn-close" id="btnCloseProblemPicker" aria-label="关闭">
+              &times;
+            </button>
+          </div>
+          <div class="modal-body">
+            <div id="problemPickerList" class="scroll-y"></div>
+          </div>
+          <div class="modal-footer justify-end">
+            <button type="button" class="btn btn-ghost" id="btnCancelProblemPicker">取消</button>
+            <button type="button" class="btn btn-primary" id="btnConfirmProblemPicker" disabled>
+              确认选择
+            </button>
+          </div>
+        </div>
+      </dialog>
+
+      <div class="app-body">
+        <!-- Left Sidebar Navigation -->
+        <aside class="sidebar-nav expanded" id="sidebarNav" aria-label="主导航">
+          <div class="nav-sidebar-header">
+            <button
+              type="button"
+              class="sidebar-toggle"
+              id="sidebarToggle"
+              aria-label="收起/展开导航"
+              aria-expanded="true"
+            >
+              <svg
+                class="toggle-icon--menu"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M3 12h18M3 6h18M3 18h18" />
+              </svg>
+              <svg
+                class="toggle-icon--back"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M6 17l-4-5 4-5M12 17l-4-5 4-5M18 17l-4-5 4-5" />
+              </svg>
+            </button>
+          </div>
+          <nav class="sidebar-menu">
+            <button
+              type="button"
+              class="btn sidebar-btn active"
+              data-page="page-problem"
+              id="navProblem"
+              data-tip="问题管理"
+            >
+              <span class="sidebar-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                  <path
+                    d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"
+                  />
+                  <path d="M12 11h4" />
+                  <path d="M12 16h4" />
+                  <path d="M8 11h.01" />
+                  <path d="M8 16h.01" />
+                </svg>
+              </span>
+              <span class="sidebar-text">问题管理</span>
+            </button>
+
+            <button
+              type="button"
+              class="btn sidebar-btn"
+              data-page="page-analysis"
+              data-tool="tool-5why"
+              data-tip="5 Whys"
+            >
+              <span class="sidebar-icon" aria-hidden="true">
+                <svg
+                  viewBox="0 0 40 40"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <text
+                    x="2"
+                    y="38"
+                    font-family="Inter, system-ui, sans-serif"
+                    font-size="20"
+                    font-weight="900"
+                    fill="currentColor"
+                    stroke="none"
+                  >
+                    5
+                  </text>
+                  <g transform="translate(-19.5, -3.5) scale(1.75)">
+                    <path
+                      d="M20 24 C20 20, 22 15, 24 10"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      fill="none"
+                    />
+                    <path
+                      d="M23 13 Q18 8, 14 5 Q17 10, 23 13Z"
+                      fill="currentColor"
+                      opacity="0.9"
+                      stroke="none"
+                    />
+                    <path
+                      d="M24 10 Q23 4, 22 1 Q25 5, 24 10Z"
+                      fill="currentColor"
+                      opacity="0.85"
+                      stroke="none"
+                    />
+                    <path
+                      d="M24 11 Q29 6, 35 5 Q30 9, 24 11Z"
+                      fill="currentColor"
+                      opacity="0.8"
+                      stroke="none"
+                    />
+                    <path
+                      d="M23 16 Q29 12, 35 12 Q29 15, 23 16Z"
+                      fill="currentColor"
+                      opacity="0.6"
+                      stroke="none"
+                    />
+                    <path
+                      d="M22 17 Q17 13, 13 12 Q17 15, 22 17Z"
+                      fill="currentColor"
+                      opacity="0.55"
+                      stroke="none"
+                    />
+                    <path
+                      d="M23.5 12 Q20 7, 17 6 Q20 9, 23.5 12Z"
+                      fill="currentColor"
+                      opacity="0.5"
+                      stroke="none"
+                    />
+                  </g>
+                </svg>
+              </span>
+              <span class="sidebar-text">5&ensp;Whys</span>
+            </button>
+            <button
+              type="button"
+              class="btn sidebar-btn"
+              data-page="page-analysis"
+              data-tool="tool-fishbone"
+              data-tip="鱼骨图"
+            >
+              <span class="sidebar-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M22 12H2 M18 8l4 4-4 4 M6 6l5 6 M12 6l5 6 M6 18l5-6 M12 18l5-6 M2 9v6l3-3-3-3z"
+                  />
+                </svg>
+              </span>
+              <span class="sidebar-text">鱼&ensp;骨&ensp;图</span>
+            </button>
+            <button
+              type="button"
+              class="btn sidebar-btn"
+              data-page="page-analysis"
+              data-tool="tool-fta"
+              data-tip="故障树"
+            >
+              <span class="sidebar-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <rect x="9" y="1" width="6" height="5" rx="1" />
+                  <rect x="1" y="17" width="6" height="5" rx="1" />
+                  <rect x="17" y="17" width="6" height="5" rx="1" />
+                  <path d="M12 6v6M12 12H4v5M12 12h8v5" />
+                </svg>
+              </span>
+              <span class="sidebar-text">故&ensp;障&ensp;树</span>
+            </button>
+            <button
+              type="button"
+              class="btn sidebar-btn"
+              data-page="page-report-library"
+              id="navReportLibrary"
+              data-tip="报告管理"
+            >
+              <span class="sidebar-icon" aria-hidden="true">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <path d="M8 18v-4" />
+                  <path d="M12 18v-7" />
+                  <path d="M16 18v-10" />
+                </svg>
+              </span>
+              <span class="sidebar-text">报告管理</span>
+            </button>
+            <button
+              type="button"
+              class="btn sidebar-btn"
+              data-page="page-knowledge"
+              id="navKnowledge"
+              data-tip="工具知识"
+            >
+              <span class="sidebar-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path
+                    d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.9 1.2 1.5 1.5 2.5"
+                  />
+                  <path d="M9 18h6" />
+                  <path d="M10 22h4" />
+                </svg>
+              </span>
+              <span class="sidebar-text">工具知识</span>
+            </button>
+          </nav>
+        </aside>
+        <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+        <!-- Main Content -->
+        <main class="main-content" id="main">
+          <!-- Page 1: Problem Management (问题库) -->
+          <div class="page-content" id="page-problem">
+            <section class="page-section" id="problemMgmtSection">
+              <div class="page-card">
+                <div class="page-header card-header-with-actions">
+                  <div>
+                    <h2 class="card-title">问题管理</h2>
+                    <p class="card-desc">管理所有待分析和已完成的问题</p>
+                  </div>
+                  <div class="card-actions page-header-actions">
+                    <button type="button" class="btn btn-primary btn-sm" id="btnCreateNewProblem">
+                      新建问题
+                    </button>
+                    <button type="button" class="btn btn-outline btn-sm" id="btnImportProblem">
+                      导入问题
+                    </button>
+                    <button type="button" class="btn btn-outline btn-sm" id="btnLoadExample">
+                      加载示例
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Problem List Container -->
+                <div class="problem-list-container" id="problemListContainer">
+                  <!-- Problem cards rendered here -->
+                </div>
+
+                <!-- Problem Detail View -->
+                <div class="problem-detail-view hidden" id="problemDetailView" data-problem-id="">
+                  <div class="problem-detail-header">
+                    <div class="problem-detail-header-left">
+                      <button
+                        type="button"
+                        class="btn btn-outline btn-sm"
+                        id="btnBackToProblemList"
+                      >
+                        ← 返回
+                      </button>
+                    </div>
+                    <div class="problem-detail-actions">
+                      <button type="button" class="btn btn-outline btn-sm" id="btnExportProblem">
+                        导出问题
+                      </button>
+                      <button type="button" class="btn btn-danger btn-sm" id="btnDeleteProblem">
+                        删除
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Problem Form -->
+                  <div class="problem-form-container">
+                    <div class="problem-id-line" id="problemIdDisplay"></div>
+                    <div class="form-group pm-title-group" style="margin-bottom: 20px">
+                      <div
+                        style="
+                          display: flex;
+                          flex-wrap: wrap;
+                          align-items: center;
+                          gap: 8px;
+                          margin-bottom: 4px;
+                        "
+                      >
+                        <label for="pm-problem-title" style="margin-bottom: 0"
+                          >问题标题 <span class="required">*</span></label
+                        >
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm"
+                          id="btnGenerateTitle"
+                          title="AI 根据问题现象生成标题"
+                        >
+                          AI 生成
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        id="pm-problem-title"
+                        class="input-field"
+                        placeholder="输入问题标题"
+                      />
+                    </div>
+                    <!-- 1. Problem Facts -->
+                    <div class="pm-section">
+                      <h3 class="pm-section-title">1. 问题现象 <span class="required">*</span></h3>
+                      <p class="pm-inline-hint">仅描述事实，不要猜测原因或填写对策</p>
+                      <div class="form-group">
+                        <textarea
+                          id="pm-problem-phenomenon"
+                          class="input-field textarea"
+                          placeholder="描述发生了什么异常现象"
+                          required
+                        ></textarea>
+                      </div>
+                      <div class="form-row">
+                        <div class="form-group flex-1">
+                          <label for="pm-severity">严重度</label>
+                          <select id="pm-severity" class="input-field">
+                            <option value="">-- 请选择 --</option>
+                            <option value="minor">轻微</option>
+                            <option value="major">一般</option>
+                            <option value="critical">严重</option>
+                          </select>
+                        </div>
+                        <div class="form-group flex-1">
+                          <label for="pm-problem-time">发生时间</label>
+                          <input type="datetime-local" id="pm-problem-time" class="input-field" />
+                        </div>
+                        <div class="form-group flex-1">
+                          <label for="pm-discovery-source">发现方式</label>
+                          <select id="pm-discovery-source" class="input-field">
+                            <option value="">-- 请选择 --</option>
+                            <option value="customer-complaint">客户投诉</option>
+                            <option value="incoming-inspection">来料检验</option>
+                            <option value="in-process">过程监控</option>
+                            <option value="final-inspection">成品检验</option>
+                            <option value="internal-audit">内部审核</option>
+                            <option value="external-audit">外部审核</option>
+                            <option value="other">其他</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="form-group">
+                        <label for="pm-containment">临时措施</label>
+                        <textarea
+                          id="pm-containment"
+                          class="input-field textarea textarea-sm"
+                          placeholder="已采取的临时措施"
+                        ></textarea>
+                      </div>
+                    </div>
+
+                    <!-- 2. GAP -->
+                    <div class="pm-section">
+                      <h3 class="pm-section-title">2. 差距分析</h3>
+                      <div class="form-group">
+                        <label for="pm-expected-state">期望值</label>
+                        <textarea
+                          id="pm-expected-state"
+                          class="input-field textarea textarea-sm"
+                          placeholder="应该达到的标准/目标/规格要求"
+                        ></textarea>
+                      </div>
+                      <div class="form-row">
+                        <div class="form-group flex-1">
+                          <label for="pm-expected-source">期望值来源</label>
+                          <select id="pm-expected-source" class="input-field">
+                            <option value="">-- 请选择 --</option>
+                            <option value="regulation">法规标准</option>
+                            <option value="customer">客户要求</option>
+                            <option value="internal">内部标准</option>
+                            <option value="design">设计规格</option>
+                            <option value="historical">历史同期表现</option>
+                            <option value="benchmark">对标/标杆</option>
+                            <option value="other">其他</option>
+                          </select>
+                        </div>
+                        <div class="form-group flex-1">
+                          <label for="pm-expected-detail">来源详情</label>
+                          <input
+                            type="text"
+                            id="pm-expected-detail"
+                            class="input-field"
+                            placeholder="标准编号/客户文件号等"
+                          />
+                        </div>
+                        <div class="form-group flex-1">
+                          <label for="pm-trend">问题趋势</label>
+                          <select id="pm-trend" class="input-field">
+                            <option value="">-- 请选择 --</option>
+                            <option value="sudden">突发</option>
+                            <option value="gradual">渐变</option>
+                            <option value="intermittent">间歇</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 3. AI Assessment -->
+                    <div class="pm-section">
+                      <div class="pm-section-title-row">
+                        <h3 class="pm-section-title">3. 问题评估</h3>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap">
+                          <button
+                            type="button"
+                            class="btn btn-primary btn-sm"
+                            id="btnViewAssessment"
+                            style="display: none"
+                            title="查看已有评估并继续审查"
+                          >
+                            查看评估
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn-outline btn-sm"
+                            id="btnAIAssess"
+                            title="AI 根据已填信息自动评估问题质量和工具适用性"
+                          >
+                            AI 评估
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn-outline btn-sm"
+                            id="btnExportAssessment"
+                            style="display: none"
+                            title="将当前 AI 评估报告导出为 Markdown"
+                          >
+                            导出 Markdown
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn-outline btn-sm"
+                            id="btnExportAssessmentWord"
+                            style="display: none"
+                            title="将当前 AI 评估报告导出为 Word"
+                          >
+                            导出 Word
+                          </button>
+                        </div>
+                      </div>
+                      <div id="pmAssessmentResult" class="pm-assessment-area">
+                        <div class="pm-assessment-placeholder">
+                          <p>填写上方信息后，点击上方按钮进行 AI 评估</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="pm-actions">
+                      <div class="pm-actions-left">
+                        <button type="button" class="btn btn-outline" id="btnSaveProblem">
+                          保存问题
+                        </button>
+                        <button type="button" class="btn btn-primary" id="btnStartProblemAnalysis">
+                          分析问题
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline"
+                          id="btnViewReports"
+                          style="display: none"
+                        >
+                          查看报告
+                        </button>
+                      </div>
+                      <div class="pm-actions-right">
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-danger-text"
+                          id="btnClearProblem"
+                        >
+                          清空表单
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <!-- Page 2: Analysis Tools (分析工具页) -->
+          <div class="page-content hidden" id="page-analysis">
+            <!-- 5 Whys Panel -->
+            <div class="tool-panel hidden" id="tool-5why">
+              <!-- Problem Definition (shows initially) -->
+              <section class="page-section page-section--full" id="problemSection">
+                <div class="page-card">
+                  <h2 class="card-title">5 Whys 分析</h2>
+                  <p class="card-desc">通过连续追问"为什么"，系统性地找到问题根本原因</p>
+
+                  <div class="form-group">
+                    <label for="analysisProblemTitle">问题标题</label>
+                    <input
+                      type="text"
+                      id="analysisProblemTitle"
+                      class="input-field"
+                      placeholder="简明扼要的问题标题"
+                    />
+                  </div>
+                  <div class="form-group">
+                    <label for="problemStatement">问题现象 <span class="required">*</span></label>
+                    <textarea
+                      id="problemStatement"
+                      class="input-field textarea"
+                      required
+                      placeholder="描述你观察到的异常现象"
+                    ></textarea>
+                    <button
+                      type="button"
+                      class="btn btn-outline btn-sm"
+                      id="btnLoadFromProblem5Why"
+                      style="margin-top: var(--space-2)"
+                    >
+                      从问题库选择
+                    </button>
+                  </div>
+                  <div class="form-group">
+                    <label for="problemContext">背景信息（可选）</label>
+                    <textarea
+                      id="problemContext"
+                      class="input-field textarea textarea-sm"
+                      placeholder="补充背景信息：发生时间、发现方式、临时措施等"
+                    ></textarea>
+                  </div>
+                  <div class="form-group form-actions-inline">
+                    <button type="button" class="btn btn-primary" id="btnStartAnalysis">
+                      开始 5 Whys 分析
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Analysis Workspace (shows after problem is defined) -->
+              <section class="page-section hidden" id="workspaceSection">
+                <div class="page-card">
+                  <div class="workspace" id="workspace">
+                    <!-- Step Navigation -->
+                    <nav class="step-navigation" aria-label="分析步骤">
+                      <button type="button" class="btn step-btn active" data-step="problem">
+                        <span class="step-icon" aria-hidden="true">
+                          <svg class="step-icon-svg" viewBox="0 0 24 24">
+                            <path
+                              d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z"
+                            />
+                            <circle cx="12" cy="10" r="3" />
+                          </svg>
+                        </span>
+                        <span class="step-label">问题</span>
+                      </button>
+                      <span class="step-arrow" aria-hidden="true">→</span>
+                      <button type="button" class="btn step-btn" data-step="why1">
+                        <span class="step-label">Why 1</span>
+                      </button>
+                      <span class="step-arrow" aria-hidden="true">→</span>
+                      <button type="button" class="btn step-btn" data-step="why2">
+                        <span class="step-label">Why 2</span>
+                      </button>
+                      <span class="step-arrow" aria-hidden="true">→</span>
+                      <button type="button" class="btn step-btn" data-step="why3">
+                        <span class="step-label">Why 3</span>
+                      </button>
+                      <span class="step-arrow" aria-hidden="true">→</span>
+                      <button type="button" class="btn step-btn" data-step="why4">
+                        <span class="step-label">Why 4</span>
+                      </button>
+                      <span class="step-arrow" aria-hidden="true">→</span>
+                      <button type="button" class="btn step-btn" data-step="why5">
+                        <span class="step-label">Why 5</span>
+                      </button>
+                      <span class="step-arrow" aria-hidden="true">→</span>
+                      <button type="button" class="btn step-btn" data-step="report">
+                        <span class="step-icon" aria-hidden="true">
+                          <svg class="step-icon-svg" viewBox="0 0 24 24">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                          </svg>
+                        </span>
+                        <span class="step-label">查看报告</span>
+                      </button>
+                    </nav>
+
+                    <!-- Toolbar -->
+                    <div class="toolbar">
+                      <div class="toolbar-left">
+                        <div class="problem-summary" id="problemSummary"></div>
+                      </div>
+                      <div class="toolbar-right">
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm ai-trigger-btn"
+                          id="btnAISuggest"
+                          title="AI 根据当前节点上下文，建议下一步追问方向"
+                        >
+                          AI 建议
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm ai-trigger-btn"
+                          id="btnAutoAnalyze"
+                          title="AI 用思维链自动推演完整因果链，直到找到可执行的根因"
+                        >
+                          AI 自动分析
+                        </button>
+                        <button type="button" class="btn btn-outline btn-sm ai-trigger-btn" id="btnVerifyCausality" title="反向验证因果链">验证因果链</button>
+                        <button type="button" class="btn btn-outline btn-sm ai-trigger-btn" id="btnConsolidate" title="智能归并重复根因">归并根因</button>
+                        <button type="button" class="btn btn-outline btn-sm btn-danger-text" id="btnReset" title="清空当前 5 Whys 分析" aria-label="清空当前 5 Whys 分析">清空当前分析</button>
+                        <span class="toolbar-divider" aria-hidden="true"></span>
+                        <button type="button" class="btn btn-primary btn-sm" id="btnFinish">
+                          生成报告
+                        </button>
+                        <span class="toolbar-divider" aria-hidden="true"></span>
+                        <span
+                          class="save-status-indicator"
+                          id="saveStatusIndicator"
+                          title="当前分析工具数据的自动保存状态"
+                          style="
+                            font-size: 0.75rem;
+                            color: var(--text-muted, #888);
+                            display: flex;
+                            align-items: center;
+                            gap: 4px;
+                            white-space: nowrap;
+                          "
+                        >
+                          <span
+                            id="saveStatusDot"
+                            style="
+                              width: 6px;
+                              height: 6px;
+                              border-radius: 50%;
+                              background: var(--analysis-accent, #008066);
+                              display: inline-block;
+                            "
+                          ></span>
+                          <span id="saveStatusText">5Whys 已保存</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Why Tree Canvas -->
+                    <div class="tree-canvas" id="treeCanvas">
+                      <!-- Tree nodes will be rendered here dynamically -->
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <!-- /tool-5why -->
+
+            <!-- Fishbone Panel -->
+            <div class="tool-panel hidden" id="tool-fishbone">
+              <section class="page-section">
+                <div class="page-card">
+                  <h2 class="card-title">鱼骨图分析</h2>
+                  <p class="card-desc">基于 5M1E 分类，AI 辅助系统分析问题原因</p>
+
+                  <!-- Fishbone Form -->
+                  <div class="fishbone-form" id="fishboneForm">
+                    <div class="form-group">
+                      <label for="fishbone-problem"
+                        >问题标题（鱼头）<span class="required">*</span></label
+                      >
+                      <input
+                        type="text"
+                        id="fishbone-problem"
+                        class="input-field"
+                        placeholder="简明扼要的问题标题（将显示在鱼头位置）"
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label for="fishbone-phenomenon-ref">问题现象</label>
+                      <textarea
+                        id="fishbone-phenomenon-ref"
+                        class="input-field textarea"
+                        placeholder="描述你观察到的异常现象"
+                      ></textarea>
+                      <button
+                        type="button"
+                        class="btn btn-outline btn-sm"
+                        id="btnLoadFromProblem"
+                        style="margin-top: var(--space-2)"
+                      >
+                        从问题库选择
+                      </button>
+                    </div>
+                    <div class="form-group">
+                      <label for="fishbone-context-ref">背景信息（参考）</label>
+                      <textarea
+                        id="fishbone-context-ref"
+                        class="input-field textarea textarea-sm"
+                        readonly
+                        placeholder="补充背景信息：发生时间、发现方式、临时措施等"
+                      ></textarea>
+                    </div>
+
+                    <!-- 5M1E Categories -->
+                    <div class="fishbone-categories" id="fishboneCategories">
+                      <!-- Categories rendered by fishbone.js -->
+                    </div>
+
+                    <div class="fishbone-actions">
+                      <button type="button" class="btn btn-primary" id="btnGenerateFishbone">
+                        渲染成图
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-outline"
+                        id="btnAIFishboneAnalyze"
+                        title="AI 根据问题描述自动生成各维度原因分析"
+                      >
+                        AI 自动分析
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-outline"
+                        id="btnAIFishboneValidate"
+                        title="AI 检查各原因之间的逻辑一致性和因果合理性"
+                      >
+                        逻辑校验
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-outline btn-danger-text"
+                        id="btnClearFishbone"
+                        title="清空当前鱼骨图分析"
+                      >
+                        清空当前分析
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Fishbone SVG Display -->
+                  <div class="fishbone-display hidden" id="fishboneDisplay">
+                    <div class="fishbone-toolbar">
+                      <div class="fb-zoom-controls">
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm"
+                          id="fbZoomIn"
+                          title="放大"
+                        >
+                          +
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm"
+                          id="fbZoomOut"
+                          title="缩小"
+                        >
+                          −
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm"
+                          id="fbZoomReset"
+                          title="重置"
+                        >
+                          ⟳
+                        </button>
+                      </div>
+                      <button type="button" class="btn btn-outline btn-sm" id="btnExportSVG">导出 SVG</button>
+                      <button type="button" class="btn btn-outline btn-sm" id="btnExportFishbonePNG" title="导出鱼骨图为高分辨率 PNG">导出 PNG</button>
+                      <button type="button" class="btn btn-primary btn-sm" id="btnGenerateFishboneReport">生成报告</button>
+                      <button type="button" class="btn btn-outline btn-sm" id="btnViewFishboneReport">
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          style="flex-shrink: 0"
+                        >
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                          <circle cx="12" cy="12" r="3"></circle></svg
+                        >查看报告</button>
+                    </div>
+                    <div class="fishbone-svg-wrapper" id="fishboneSvgWrapper">
+                      <!-- SVG rendered here -->
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <!-- /tool-fishbone -->
+
+            <!-- FTA Panel -->
+            <div class="tool-panel hidden" id="tool-fta">
+              <section class="page-section">
+                <div class="page-card">
+                  <h2 class="card-title">故障树分析（FTA）</h2>
+                  <p class="card-desc">
+                    基于 IEC 61025，通过 AND/OR 逻辑门自上而下分析故障组合原因
+                  </p>
+
+                  <!-- 顶事件定义 -->
+                  <div id="ftaTopEventForm"></div>
+
+                  <div class="fta-workbench">
+                    <!-- 故障树显示区 -->
+                    <div class="fta-tree-area">
+                      <div class="fta-tree-toolbar">
+                        <div class="fta-view-actions">
+                        <button type="button" class="btn btn-outline btn-sm" id="btnFtaToggleView">
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            style="flex-shrink: 0"
+                          >
+                            <path
+                              d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                            ></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" y1="13" x2="8" y2="13"></line>
+                            <line x1="16" y1="17" x2="8" y2="17"></line>
+                            <polyline points="10 9 9 9 8 9"></polyline></svg
+                          >图形视图
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm"
+                          id="btnFtaCopyText"
+                          title="复制 ASCII 纯文本树"
+                        >
+                          复制文本
+                        </button>
+                        </div>
+                        <div class="fta-stats" id="ftaStats"></div>
+                      </div>
+                      <!-- ASCII 文本视图（默认，可编辑） -->
+                      <div class="fta-view-container">
+                        <div class="fta-html-tree" id="ftaHtmlTree"></div>
+                      </div>
+                      <!-- SVG 图形视图（只读展示） -->
+                      <div class="fta-view-container hidden">
+                        <div class="fta-zoom-controls">
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm"
+                          id="ftaZoomIn"
+                          title="放大"
+                          aria-label="放大"
+                        >
+                          +
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm"
+                          id="ftaZoomOut"
+                          title="缩小"
+                          aria-label="缩小"
+                        >
+                          −
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm"
+                          id="ftaZoomReset"
+                          title="重置"
+                          aria-label="重置缩放"
+                        >
+                          ⟳
+                        </button>
+                        <span
+                          style="
+                            width: 1px;
+                            height: 16px;
+                            background-color: var(--border);
+                            margin: 0 var(--space-1);
+                            align-self: center;
+                          "
+                        ></span>
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm"
+                          id="btnExportFtaSVG"
+                          title="导出故障树为 SVG"
+                        >
+                          导出 SVG
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-outline btn-sm"
+                          id="btnExportFtaPNG"
+                          title="导出故障树为高分辨率 PNG"
+                        >
+                          导出 PNG
+                        </button>
+                        </div>
+                        <div class="fta-graphic-wrapper" id="ftaGraphicWrapper"></div>
+                      </div>
+                    </div>
+
+                  </div>
+                  <!-- 节点编辑弹窗 -->
+                  <div class="fta-node-editor" id="ftaNodeEditor"></div>
+                </div>
+              </section>
+            </div>
+            <!-- /tool-fta -->
+          </div>
+          <!-- /page-analysis -->
+
+          <!-- Page 4: Knowledge Base (知识库) -->
+
+          <div class="page-content hidden" id="page-knowledge">
+            <section class="page-section">
+              <div class="page-card">
+                <h2 class="card-title">质量工具知识库</h2>
+                <p class="card-desc">
+                  聚焦 WhyFish 工作流：定义问题、发散原因、建立因果逻辑并用证据验证结论
+                </p>
+                <div id="knowledgeContent">
+                  <!-- Rendered by knowledge.js -->
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <!-- Page 5: Report Library (报告库) -->
+          <div class="page-content hidden" id="page-report-library">
+            <section class="page-section">
+              <div class="page-card">
+                <div class="page-header card-header-with-actions">
+                  <div>
+                    <h2 class="card-title">报告管理</h2>
+                    <p class="card-desc">管理所有保存的分析报告，支持查看、删除和导出</p>
+                  </div>
+                  <div class="card-actions page-header-actions"></div>
+                </div>
+
+                <!-- Report List -->
+                <div class="report-library-container" id="reportLibraryContainer">
+                  <!-- Report list rendered here -->
+                </div>
+
+                <!-- Report Detail View -->
+                <div class="report-detail-view hidden" id="reportDetailView">
+                  <div class="report-detail-header">
+                    <button type="button" class="btn btn-outline btn-sm" id="btnBackToReportList">
+                      ← 返回
+                    </button>
+                    <div class="report-detail-actions">
+                      <button
+                        type="button"
+                        class="btn btn-outline btn-sm"
+                        id="btnExportReportDetail"
+                      >
+                        导出 Markdown
+                      </button>
+                      <button type="button" class="btn btn-outline btn-sm" id="btnExportReportWord">
+                        导出 Word
+                      </button>
+                      <button type="button" class="btn btn-danger btn-sm" id="btnDeleteReport">
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                  <div class="report-detail-content" id="reportDetailContent">
+                    <!-- Report detail rendered here -->
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <!-- Footer -->
+          <footer class="app-footer">
+            <p class="app-footer-text">© 2026 Jimmy Wong. 保留所有权利。</p>
+          </footer>
+        </main>
+      </div>
+
+      <!-- AI Sidebar (slides in) -->
+      <aside class="ai-sidebar" id="aiSidebar" aria-label="AI 助手">
+        <div class="sidebar-header">
+          <!-- 移动端专属"返回"按钮，默认隐藏，@media 中 display:flex -->
+          <button
+            type="button"
+            class="sidebar-header-back"
+            id="btnSidebarBack"
+            aria-label="返回"
+          >
+            ← 返回
+          </button>
+          <h3 id="sidebarTitle">AI 助手</h3>
+          <button
+            type="button"
+            class="ai-history-btn hidden"
+            id="btnAiHistory"
+            aria-label="查看 AI 结果记录"
+            title="查看 AI 结果记录"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+              <path d="M3 3v5h5M12 7v5l3 2" />
+            </svg>
+            <span id="aiHistoryCount"></span>
+          </button>
+          <button type="button" class="btn-close" id="btnCloseSidebar" aria-label="关闭">
+            &times;
+          </button>
+        </div>
+        <div class="sidebar-body">
+          <div class="ai-loading hidden" id="aiLoading" role="status" aria-live="polite">
+            <div class="loading-dots"><span></span><span></span><span></span></div>
+            <div class="ai-loading-info">
+              <span id="aiLoadingText">AI 正在分析...</span>
+              <span id="aiLoadingElapsed" class="ai-loading-elapsed"></span>
+            </div>
+            <button
+              type="button"
+              class="btn btn-outline btn-danger-text btn-sm btn-cancel-ai"
+              id="btnCancelAi"
+              style="margin-top: 12px; display: block; margin-left: auto; margin-right: auto"
+            >
+              取消分析
+            </button>
+          </div>
+          <div id="aiContent" class="markdown-content"></div>
+          <p class="ai-usage-notice" role="note">
+            WhyFish 的 AI 内容仅作为分析线索，请结合证据和专业判断复核。
+          </p>
+        </div>
+        <!-- 移动端固定底部操作栏（桌面端隐藏，JS 动态注入按钮） -->
+        <div class="sidebar-footer" id="sidebarFooter"></div>
+      </aside>
+
+      <button
+        type="button"
+        class="ai-result-launcher hidden"
+        id="btnAiResultLauncher"
+        aria-controls="aiSidebar"
+        aria-expanded="false"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3a6 6 0 0 0-3.8 10.6c.5.4.8 1 .8 1.6V17h6v-1.8c0-.6.3-1.2.8-1.6A6 6 0 0 0 12 3Z" />
+          <path d="M9.5 21h5M9 17h6" />
+        </svg>
+        <span>AI 结果</span>
+        <span class="ai-result-launcher-dot" aria-hidden="true"></span>
+      </button>
+
+      <!-- Toast -->
+      <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
+    </div>
+
+    <!-- Third-party Libraries -->
+    <script defer src="lib/purify.min.js"></script>
+    <script defer src="lib/marked.min.js"></script>
+    <script defer src="lib/html-docx.min.js"></script>
+
+    <!-- Core Modules — load order matters -->
+    <script defer src="js/core/labels.js?v=1.0.3"></script>
+    <script defer src="js/core/ui-utils.js?v=1.0.3"></script>
+    <script defer src="js/core/prompts.js?v=1.0.3"></script>
+    <script defer src="js/core/report-contract.js?v=1.0.3"></script>
+    <script defer src="js/core/tool-knowledge.js?v=2.0.0"></script>
+    <script defer src="js/core/store.js?v=1.0.3"></script>
+    <script defer src="js/core/config.js?v=1.0.3"></script>
+    <script defer src="js/core/problem-utils.js?v=1.0.3"></script>
+    <script defer src="js/core/ai.js?v=1.0.3"></script>
+    <script defer src="js/core/tree.js?v=1.0.3"></script>
+    <!-- Plugins & Extensions -->
+    <script defer src="js/core/examples-data.js?v=1.0.3"></script>
+    <script defer src="js/plugins/problem-manager.js?v=1.0.3"></script>
+    <script defer src="js/core/knowledge.js?v=2.0.0"></script>
+    <script defer src="js/plugins/fishbone-svg.js?v=1.0.3"></script>
+    <script defer src="js/plugins/fishbone.js?v=1.0.3"></script>
+    <script defer src="js/plugins/fta.js?v=1.0.3"></script>
+
+    <!-- Extracted Modules (loaded before app.js) -->
+    <script defer src="js/core/report-library.js?v=1.0.3"></script>
+    <script defer src="js/core/problem-pool.js?v=1.0.3"></script>
+    <script defer src="js/core/analysis-hub.js?v=1.0.3"></script>
+    <script defer src="js/core/settings-panel.js?v=1.0.3"></script>
+
+    <!-- Entry Point -->
+    <script defer src="js/core/app.js?v=1.0.3"></script>
+  </body>
+</html>
