@@ -1,4 +1,4 @@
-# WhyFish — Problem-Solving Copilot
+# WhyFish
 
 AI 辅助的质量问题分析与解决工具，支持问题定义评估、5 Whys、鱼骨图和故障树分析（FTA）。
 
@@ -21,6 +21,8 @@ npx serve app/
 从 [GitHub Releases](https://github.com/wongjin/whyfish-release/releases) 下载 Windows `setup.exe` 安装包。
 
 未签名的 Beta 安装包可能触发 Windows SmartScreen；请核对发布来源后再决定是否安装。
+
+桌面版使用简体中文安装引导。JSON、Markdown、Word、SVG 和 PNG 导出均使用系统原生“另存为”窗口，并记住上次成功导出的目录。
 
 ## 自动构建
 

@@ -412,16 +412,16 @@ exportContent += '\n\n---\n\n' + safeSanitize(ftaContainer.innerHTML.trim()) + '
 }
 
 const blob = new Blob([exportContent], { type: 'text/markdown;charset=utf-8' });
-const url = URL.createObjectURL(blob);
-const a = document.createElement('a');
-a.href = url;
 const safeTitle = window.UIUtils.sanitizeFilenameBase(report.title);
-a.download = `${safeTitle}-${new Date(report.createdAt).toISOString().slice(0, 10)}.md`;
-document.body.appendChild(a);
-a.click();
-document.body.removeChild(a);
-URL.revokeObjectURL(url);
-showToast('报告已成功下载', 'success');
+window.UIUtils.saveExportBlob(
+blob,
+`${safeTitle}-${new Date(report.createdAt).toISOString().slice(0, 10)}.md`,
+{
+filterName: 'Markdown 文档',
+extensions: ['md'],
+successMessage: '报告已成功导出'
+}
+);
 });
 
 document.getElementById('btnExportReportWord')?.addEventListener('click', async () => {

@@ -1107,20 +1107,20 @@ reports: reports
 const blob = new Blob([JSON.stringify(exportData, null, 2)], {
 type: 'application/json;charset=utf-8'
 });
-const url = URL.createObjectURL(blob);
-const a = document.createElement('a');
-a.href = url;
 const safeTitle = (problem.title || 'problem')
 .replace(/[^\w一-龥]/g, '-')
 .replace(/-+/g, '-')
 .replace(/^-|-$/g, '')
 .slice(0, 30);
-a.download = `problem-${safeTitle}-${new Date().toISOString().slice(0, 10)}.json`;
-document.body.appendChild(a);
-a.click();
-document.body.removeChild(a);
-URL.revokeObjectURL(url);
-showToast('已导出（含 ' + reports.length + ' 份报告）', 'success');
+window.UIUtils.saveExportBlob(
+blob,
+`problem-${safeTitle}-${new Date().toISOString().slice(0, 10)}.json`,
+{
+filterName: 'JSON 文件',
+extensions: ['json'],
+successMessage: '已导出（含 ' + reports.length + ' 份报告）'
+}
+);
 });
 
 document.getElementById('btnImportProblem')?.addEventListener('click', () => {

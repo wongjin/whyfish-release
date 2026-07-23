@@ -922,15 +922,15 @@ return;
 }
 const svgStr = new XMLSerializer().serializeToString(svgEl);
 const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
-const url = URL.createObjectURL(blob);
-const a = document.createElement('a');
-a.href = url;
-a.download = '鱼骨根因分析图_' + new Date().toISOString().slice(0, 10) + '.svg';
-document.body.appendChild(a);
-a.click();
-document.body.removeChild(a);
-URL.revokeObjectURL(url);
-if (window.showToast) window.showToast('SVG 已导出下载', 'success');
+window.UIUtils.saveExportBlob(
+blob,
+'鱼骨根因分析图_' + new Date().toISOString().slice(0, 10) + '.svg',
+{
+filterName: 'SVG 图片',
+extensions: ['svg'],
+successMessage: 'SVG 已导出'
+}
+);
 }
 
 /** 复制 SVG 源码到剪贴板 */

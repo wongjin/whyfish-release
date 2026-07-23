@@ -1,7 +1,7 @@
 [package]
 name = "whyfish"
-version = "0.2.0"
-description = "WhyFish — Problem-Solving Copilot"
+version = "0.2.1"
+description = "WhyFish 问题分析与解决工具"
 authors = ["wongjin"]
 license = "MIT"
 repository = "https://github.com/wongjin/whyfish-release"

@@ -1226,16 +1226,16 @@ _exportedAt: new Date().toISOString(),
 ...data
 };
 const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-const url = URL.createObjectURL(blob);
-const a = document.createElement('a');
-a.href = url;
 const safeName = (data.phenomenon || 'unnamed').slice(0, 20).replace(/[/\\:*?"<>|]/g, '_');
-a.download = `问题_${safeName}_${new Date().toISOString().slice(0, 10)}.json`;
-document.body.appendChild(a);
-a.click();
-document.body.removeChild(a);
-URL.revokeObjectURL(url);
-showToast('问题已导出', 'success');
+window.UIUtils.saveExportBlob(
+blob,
+`问题_${safeName}_${new Date().toISOString().slice(0, 10)}.json`,
+{
+filterName: 'JSON 文件',
+extensions: ['json'],
+successMessage: '问题已导出'
+}
+);
 }
 
 /** 从 JSON 文件导入问题 */

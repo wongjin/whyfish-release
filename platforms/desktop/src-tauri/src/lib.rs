@@ -1,5 +1,7 @@
-use serde::Deserialize;
 use rfd::FileDialog;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use tauri::Manager;
 
 #[derive(Deserialize)]
 struct ProxyArgs {
@@ -16,7 +18,8 @@ async fn proxy_call(args: ProxyArgs) -> Result<String, String> {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| format!("Client build failed: {}", e))?;
-    let mut req = client.post(&args.url)
+    let mut req = client
+        .post(&args.url)
         .header("Content-Type", "application/json")
         .body(args.body);
 
@@ -47,42 +50,138 @@ struct SaveDocxArgs {
     base64_data: String,
 }
 
-#[tauri::command]
-async fn save_docx_local(args: SaveDocxArgs) -> Result<String, String> {
-    let file_path = FileDialog::new()
-        .add_filter("Word Document", &["docx"])
-        .set_file_name(&format!("{}.docx", args.title.replace("/", "_").replace("\\", "_")))
-        .save_file();
+#[derive(Deserialize)]
+struct SaveFileArgs {
+    filename: String,
+    base64_data: String,
+    filter_name: Option<String>,
+    extensions: Option<Vec<String>>,
+}
 
-    let path = match file_path {
-        Some(p) => p,
-        None => return Ok("Cancelled".to_string()),
+#[derive(Default, Deserialize, Serialize)]
+struct ExportPreferences {
+    last_directory: Option<PathBuf>,
+}
+
+fn export_preferences_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_local_data_dir()
+        .map(|dir| dir.join("export-preferences.json"))
+        .map_err(|e| format!("Failed to resolve app data directory: {e}"))
+}
+
+fn load_export_preferences(app: &tauri::AppHandle) -> ExportPreferences {
+    let Ok(path) = export_preferences_path(app) else {
+        return ExportPreferences::default();
     };
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return ExportPreferences::default();
+    };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
 
-    let clean_base64 = if args.base64_data.starts_with("data:") {
-        if let Some(comma_idx) = args.base64_data.find(',') {
-            &args.base64_data[comma_idx + 1..]
-        } else {
-            &args.base64_data
+fn remember_export_directory(app: &tauri::AppHandle, directory: &Path) {
+    let Ok(path) = export_preferences_path(app) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            log::warn!("Failed to create export preferences directory: {error}");
+            return;
         }
+    }
+    let preferences = ExportPreferences {
+        last_directory: Some(directory.to_path_buf()),
+    };
+    match serde_json::to_vec_pretty(&preferences) {
+        Ok(raw) => {
+            if let Err(error) = std::fs::write(path, raw) {
+                log::warn!("Failed to save export preferences: {error}");
+            }
+        }
+        Err(error) => log::warn!("Failed to serialize export preferences: {error}"),
+    }
+}
+
+fn decode_base64_data(base64_data: &str) -> Result<Vec<u8>, String> {
+    let encoded = if base64_data.starts_with("data:") {
+        base64_data
+            .split_once(',')
+            .map(|(_, payload)| payload)
+            .unwrap_or(base64_data)
     } else {
-        &args.base64_data
+        base64_data
     };
 
-    use base64::{Engine as _, engine::general_purpose};
-    let docx_bytes = general_purpose::STANDARD.decode(clean_base64)
-        .map_err(|e| format!("Failed to decode base64: {}", e))?;
+    use base64::{engine::general_purpose, Engine as _};
+    general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|e| format!("Failed to decode exported file: {e}"))
+}
 
-    std::fs::write(&path, docx_bytes)
-        .map_err(|e| format!("Failed to write file: {}", e))?;
+fn safe_export_filename(filename: &str) -> String {
+    Path::new(filename)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("WhyFish-export")
+        .to_string()
+}
+
+fn save_export_file(app: &tauri::AppHandle, args: SaveFileArgs) -> Result<String, String> {
+    let bytes = decode_base64_data(&args.base64_data)?;
+    let preferences = load_export_preferences(app);
+    let mut dialog = FileDialog::new().set_file_name(safe_export_filename(&args.filename));
+
+    if let Some(directory) = preferences.last_directory.filter(|path| path.is_dir()) {
+        dialog = dialog.set_directory(directory);
+    }
+
+    if let Some(extensions) = args.extensions.filter(|items| !items.is_empty()) {
+        dialog = dialog.add_filter(
+            args.filter_name.as_deref().unwrap_or("WhyFish 文件"),
+            &extensions,
+        );
+    }
+
+    let Some(path) = dialog.save_file() else {
+        return Ok("Cancelled".to_string());
+    };
+
+    std::fs::write(&path, bytes).map_err(|e| format!("Failed to write file: {e}"))?;
+    if let Some(directory) = path.parent() {
+        remember_export_directory(app, directory);
+    }
 
     Ok("Success".to_string())
+}
+
+#[tauri::command]
+fn save_file_local(app: tauri::AppHandle, args: SaveFileArgs) -> Result<String, String> {
+    save_export_file(&app, args)
+}
+
+#[tauri::command]
+fn save_docx_local(app: tauri::AppHandle, args: SaveDocxArgs) -> Result<String, String> {
+    save_export_file(
+        &app,
+        SaveFileArgs {
+            filename: format!("{}.docx", args.title.replace("/", "_").replace("\\", "_")),
+            base64_data: args.base64_data,
+            filter_name: Some("Word 文档".to_string()),
+            extensions: Some(vec!["docx".to_string()]),
+        },
+    )
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![proxy_call, save_docx_local])
+        .invoke_handler(tauri::generate_handler![
+            proxy_call,
+            save_file_local,
+            save_docx_local
+        ])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -95,4 +194,21 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_base64_data, safe_export_filename};
+
+    #[test]
+    fn decodes_data_urls_for_native_exports() {
+        let decoded = decode_base64_data("data:text/plain;base64,5rWL6K+V").unwrap();
+        assert_eq!(String::from_utf8(decoded).unwrap(), "测试");
+    }
+
+    #[test]
+    fn strips_directories_from_export_filenames() {
+        assert_eq!(safe_export_filename("../../report.md"), "report.md");
+        assert_eq!(safe_export_filename(""), "WhyFish-export");
+    }
 }

@@ -1409,20 +1409,20 @@ const svgEl = document.querySelector('#ftaGraphicWrapper svg');
 if (svgEl) {
 const svgStr = new XMLSerializer().serializeToString(svgEl);
 const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
-const url = URL.createObjectURL(blob);
-const a = document.createElement('a');
-a.href = url;
 const safeTitle = (ftaData.nodes[ftaData.rootId]?.name || '故障树')
 .replace(/[^\w一-龥]/g, '-')
 .replace(/-+/g, '-')
 .replace(/^-|-$/g, '')
 .slice(0, 30);
-a.download = `FTA-${safeTitle}-${new Date().toISOString().slice(0, 10)}.svg`;
-document.body.appendChild(a);
-a.click();
-document.body.removeChild(a);
-URL.revokeObjectURL(url);
-showToast('故障树 SVG 已成功导出下载', 'success');
+window.UIUtils.saveExportBlob(
+blob,
+`FTA-${safeTitle}-${new Date().toISOString().slice(0, 10)}.svg`,
+{
+filterName: 'SVG 图片',
+extensions: ['svg'],
+successMessage: '故障树 SVG 已导出'
+}
+);
 } else {
 showToast('请先创建故障树', 'error');
 }

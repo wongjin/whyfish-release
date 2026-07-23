@@ -87,7 +87,7 @@ c.style.cssText =
 document.body.appendChild(c);
 }
 
-while (c.children.length >= UI_CONFIG.TOAST_MAX && c.firstElementChild) {
+while ((c.children?.length || 0) >= UI_CONFIG.TOAST_MAX && c.firstElementChild) {
 c.firstElementChild.remove();
 }
 
@@ -478,6 +478,101 @@ return 'API 请求超时，请稍后重试或切换模型。';
 return '请检查网络连接和模型配置，或尝试切换其他模型。';
 }
 
+function _isTauriDesktop() {
+return typeof window !== 'undefined' && typeof window.__TAURI__?.core?.invoke === 'function';
+}
+
+function _exportFileOptions(filename, options = {}) {
+const extensionMatch = String(filename || '').match(/\.([^.]+)$/);
+const extension = extensionMatch ? extensionMatch[1].toLowerCase() : '';
+const filterNames = {
+docx: 'Word 文档',
+json: 'JSON 文件',
+md: 'Markdown 文档',
+png: 'PNG 图片',
+svg: 'SVG 图片'
+};
+return {
+filterName: options.filterName || filterNames[extension] || 'WhyFish 文件',
+extensions: options.extensions || (extension ? [extension] : []),
+successMessage: options.successMessage || '文件已保存'
+};
+}
+
+function _browserDownloadHref(href, filename, revokeAfterDownload = false) {
+const a = document.createElement('a');
+a.href = href;
+a.download = filename;
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
+if (revokeAfterDownload) URL.revokeObjectURL(href);
+}
+
+function _invokeNativeFileSave(base64Data, filename, options = {}) {
+const resolved = _exportFileOptions(filename, options);
+showToast('请选择文件保存位置', 'info');
+return window.__TAURI__.core
+.invoke('save_file_local', {
+args: {
+filename: filename,
+base64_data: base64Data,
+filter_name: resolved.filterName,
+extensions: resolved.extensions
+}
+})
+.then((result) => {
+if (result === 'Success') {
+showToast(resolved.successMessage, 'success');
+} else if (result === 'Cancelled') {
+showToast('导出已取消', 'info');
+}
+return result;
+})
+.catch((err) => {
+console.error('Tauri file export error:', err);
+showToast(`文件保存失败: ${err}`, 'error');
+return 'Error';
+});
+}
+
+function _blobToDataUrl(blob) {
+return new Promise((resolve, reject) => {
+const reader = new FileReader();
+reader.onloadend = () => resolve(reader.result);
+reader.onerror = () => reject(reader.error || new Error('文件转码失败'));
+reader.readAsDataURL(blob);
+});
+}
+
+function saveExportBlob(blob, filename, options = {}) {
+const resolved = _exportFileOptions(filename, options);
+if (!_isTauriDesktop()) {
+const url = URL.createObjectURL(blob);
+_browserDownloadHref(url, filename, true);
+showToast(resolved.successMessage, 'success');
+return Promise.resolve('Success');
+}
+
+return _blobToDataUrl(blob)
+.then((base64Data) => _invokeNativeFileSave(base64Data, filename, resolved))
+.catch((err) => {
+console.error('FileReader error:', err);
+showToast('文件转码失败', 'error');
+return 'Error';
+});
+}
+
+function saveExportDataUrl(dataUrl, filename, options = {}) {
+const resolved = _exportFileOptions(filename, options);
+if (!_isTauriDesktop()) {
+_browserDownloadHref(dataUrl, filename);
+showToast(resolved.successMessage, 'success');
+return Promise.resolve('Success');
+}
+return _invokeNativeFileSave(dataUrl, filename, resolved);
+}
+
 window.UIUtils = {
 config: UI_CONFIG,
 registerPageHook: registerPageHook,
@@ -615,15 +710,14 @@ return window.UIUtils.preventOrphans(lines);
 downloadMarkdown: function (content, filename) {
 const markdownContent = typeof content === 'function' ? content() : content;
 const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
-const url = URL.createObjectURL(blob);
-const a = document.createElement('a');
-a.href = url;
-a.download = filename;
-document.body.appendChild(a);
-a.click();
-document.body.removeChild(a);
-URL.revokeObjectURL(url);
+return saveExportBlob(blob, filename, {
+filterName: 'Markdown 文档',
+extensions: ['md'],
+successMessage: 'Markdown 报告已导出'
+});
 },
+saveExportBlob: saveExportBlob,
+saveExportDataUrl: saveExportDataUrl,
 sanitizeFilenameBase: function (value, maxLength = 30, fallback = 'report') {
 const cleaned = String(value || '')
 .normalize('NFC')
@@ -671,52 +765,11 @@ ${safeContent}
 
 if (typeof htmlDocx !== 'undefined' && typeof htmlDocx.asBlob === 'function') {
 const blob = htmlDocx.asBlob(convertedHtml);
-if (window.__TAURI__?.core?.invoke) {
-showToast('正在导出本地 Word 文档...', 'info');
-const reader = new FileReader();
-reader.onloadend = function () {
-const base64Data = reader.result;
-reader.onloadend = null;
-reader.onerror = null;
-const title = filename.replace(/\.docx$/i, '');
-window.__TAURI__.core
-.invoke('save_docx_local', {
-args: {
-title: title,
-base64_data: base64Data
-}
-})
-.then((result) => {
-if (result === 'Success') {
-showToast('报告已成功保存', 'success');
-} else if (result === 'Cancelled') {
-showToast('导出已取消', 'info');
-}
-})
-.catch((err) => {
-console.error('Tauri docx export error:', err);
-showToast(`Tauri 导出失败: ${err}`, 'error');
+return saveExportBlob(blob, filename, {
+filterName: 'Word 文档',
+extensions: ['docx'],
+successMessage: 'Word 报告已导出'
 });
-};
-reader.onerror = function (err) {
-reader.onloadend = null;
-reader.onerror = null;
-console.error('FileReader error:', err);
-showToast('文件转码失败', 'error');
-};
-reader.readAsDataURL(blob);
-} else {
-showToast('正在生成 Word 报告...', 'info');
-const url = URL.createObjectURL(blob);
-const a = document.createElement('a');
-a.href = url;
-a.download = filename;
-document.body.appendChild(a);
-a.click();
-document.body.removeChild(a);
-URL.revokeObjectURL(url);
-showToast('Word 报告已成功下载', 'success');
-}
 } else {
 console.error('htmlDocx library not loaded.');
 if (typeof showToast === 'function') {
@@ -1266,13 +1319,11 @@ try {
 if (window.showToast) window.showToast('正在转换为高分辨率 PNG...', 'info');
 const pngBase64 = await window.UIUtils.svgToPngBase64(svgElement);
 if (pngBase64) {
-const a = document.createElement('a');
-a.href = pngBase64;
-a.download = defaultFilename;
-document.body.appendChild(a);
-a.click();
-document.body.removeChild(a);
-if (window.showToast) window.showToast('PNG 已经成功导出下载', 'success');
+await saveExportDataUrl(pngBase64, defaultFilename, {
+filterName: 'PNG 图片',
+extensions: ['png'],
+successMessage: 'PNG 已成功导出'
+});
 } else {
 throw new Error('Canvas conversion returned empty base64');
 }
