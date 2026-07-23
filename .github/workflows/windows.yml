@@ -1,0 +1,76 @@
+name: Build WhyFish for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*'
+    paths:
+      - 'app/**'
+      - 'platforms/desktop/**'
+      - '.github/workflows/windows.yml'
+      - 'README.md'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: platforms/desktop/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: platforms/desktop/src-tauri
+
+      - name: Install Tauri CLI
+        working-directory: platforms/desktop
+        run: npm ci
+
+      - name: Build workflow artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: platforms/desktop
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: 'WhyFish-[version]-Windows-[arch]-[bundle]'
+
+      - name: Build and publish GitHub Release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: platforms/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: 'WhyFish v__VERSION__ (Beta)'
+          releaseBody: |
+            WhyFish Beta Windows release.
+
+            Download the NSIS setup executable below. This Beta build is not code-signed and may trigger Windows SmartScreen.
+          releaseDraft: false
+          prerelease: true
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: 'WhyFish-[version]-Windows-[arch]-[bundle]'
