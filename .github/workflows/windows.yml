@@ -1,0 +1,85 @@
+name: Build WhyFish for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*'
+    paths:
+      - 'app/**'
+      - 'platforms/desktop/**'
+      - '.github/workflows/windows.yml'
+      - 'README.md'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: platforms/desktop/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: platforms/desktop/src-tauri
+
+      - name: Install Tauri CLI
+        working-directory: platforms/desktop
+        run: npm ci
+
+      - name: Build workflow artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: platforms/desktop
+
+      - name: Upload Windows installer artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: WhyFish-0.2.1-Windows-x64-NSIS
+          path: platforms/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Build and publish GitHub Release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: platforms/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: 'WhyFish v__VERSION__ (Beta)'
+          releaseBody: |
+            WhyFish 0.2.1 Beta Windows 版本。
+
+            - 窗口标题简化为 WhyFish
+            - JSON、Markdown、Word、SVG、PNG 使用原生另存为窗口，并记住上次导出目录
+            - 安装与卸载引导改为简体中文
+
+            请下载下方 NSIS 安装程序。本 Beta 版本尚未进行代码签名，可能触发 Windows SmartScreen。
+          releaseDraft: false
+          prerelease: true

@@ -1,0 +1,9 @@
+node_modules/
+platforms/desktop/node_modules/
+platforms/desktop/src-tauri/target/
+app/styles.css
+app/dist/
+app/.web-build/
+.DS_Store
+Thumbs.db
+*.log

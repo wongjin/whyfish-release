@@ -1,0 +1,14 @@
+{
+  "name": "whyfish-desktop",
+  "version": "0.2.1",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build && node scripts/create-dmg.js",
+    "build:exe": "powershell -ExecutionPolicy Bypass -File scripts/build-exe.ps1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.2"
+  }
+}
