@@ -357,6 +357,17 @@
     renderAll();
   }
 
+  /**
+   * 仅重置内存状态：不删除持久化数据、不改写问题快照。
+   * 用于"加载另一个问题"前清场——此时后续还要从 IndexedDB 读回该问题的故障树，
+   * 若调用 clear() 会先删库，反而丢掉本可恢复的数据。
+   */
+  function resetFtaMemory() {
+    ftaData = createEmptyFtaData();
+    _ftaNextId = 1;
+    renderAll();
+  }
+
   async function importData(data) {
     // P0-3: 捕获当前 PID 用于写入（防止 async 调用链中 PID 变化）
     const _importCapturedPid = typeof getActiveProblemId === 'function' ? getActiveProblemId() : null;
@@ -2523,14 +2534,23 @@
   function _expandNode(nodeId) {
     const node = ftaData.nodes[nodeId];
     if (!node) return [[nodeId]];
+    const children = Array.isArray(node.children) ? node.children : [];
 
     // 底事件或无子节点：返回单元素割集
-    if (node.children.length === 0 || node.type === 'basic' || node.type === 'undeveloped') {
+    if (children.length === 0 || node.type === 'basic' || node.type === 'undeveloped') {
       return [[nodeId]];
     }
 
+    // 任何可展开事件（含顶事件）都必须有有效逻辑门。缺门时不能把它
+    // 当作基本事件返回单元素割集，那会把"结构缺失"伪装成单点故障。
+    if (node.gateType !== 'AND' && node.gateType !== 'OR') {
+      throw new Error(
+        `节点「${node.name || nodeId}」有 ${children.length} 个子事件但未指定逻辑门(AND/OR)，无法计算最小割集`
+      );
+    }
+
     // 递归展开子节点
-    const childSets = node.children.map((cid) => _expandNode(cid));
+    const childSets = children.map((cid) => _expandNode(cid));
 
     if (node.gateType === 'OR') {
       // OR 门：合并所有子节点的割集（并集）
@@ -2552,7 +2572,6 @@
       }
       return _removeSupersets(result);
     }
-    // 无门类型，视为单元素
     return [[nodeId]];
   }
 
@@ -2573,12 +2592,45 @@
     return result;
   }
 
+  /**
+   * 去除被其他割集包含的超集。
+   * 按阶数（割集大小）分桶后只需与更小阶的已保留割集比较：
+   * 同阶割集只有完全相同才可能互相包含，而这已被键去重处理。
+   * 这样常见输入（大量同阶互不包含的割集）从 O(n²) 降到接近 O(n)。
+   */
   function _removeSupersets(sets) {
-    const sorted = sets.slice().sort((a, b) => a.length - b.length);
+    if (sets.length <= 1) return sets;
+    const bySize = new Map();
+    const seen = new Set();
+    for (const s of sets) {
+      const key = s.length > 1 ? s.slice().sort().join('\u0000') : String(s[0]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      let bucket = bySize.get(s.length);
+      if (!bucket) {
+        bucket = [];
+        bySize.set(s.length, bucket);
+      }
+      bucket.push(s);
+    }
+
+    const sizes = Array.from(bySize.keys()).sort((a, b) => a - b);
     const minimal = [];
-    for (const s of sorted) {
-      const isSuperset = minimal.some((m) => m.every((e) => s.includes(e)));
-      if (!isSuperset) minimal.push(s);
+    for (const size of sizes) {
+      for (const s of bySize.get(size)) {
+        const elemSet = new Set(s);
+        let isSuperset = false;
+        // minimal 按阶数递增排列；同阶不可能是真超集（已去重），直接跳过
+        for (let i = 0; i < minimal.length; i++) {
+          const m = minimal[i];
+          if (m.length >= size) break;
+          if (m.every((e) => elemSet.has(e))) {
+            isSuperset = true;
+            break;
+          }
+        }
+        if (!isSuperset) minimal.push(s);
+      }
     }
     return minimal;
   }
@@ -2598,12 +2650,17 @@
     ids.forEach((id) => {
       const node = ftaData.nodes[id];
 
-      // R1: 中间事件必须有逻辑门
-      if (node.type === 'intermediate' && node.children.length > 0 && !node.gateType) {
+      // R1: 可展开事件（顶事件/中间事件）有子节点就必须指定逻辑门。
+      // 顶事件遗漏门类型同样会破坏割集计算，不能只检查 intermediate。
+      if (
+        (node.type === 'top' || node.type === 'intermediate') &&
+        node.children.length > 0 &&
+        !node.gateType
+      ) {
         errors.push({
           nodeId: id,
           rule: 'R1',
-          msg: `中间事件「${node.name}」有子节点但未指定逻辑门(AND/OR)`
+          msg: `${node.type === 'top' ? '顶事件' : '中间事件'}「${node.name}」有子节点但未指定逻辑门(AND/OR)`
         });
       }
 
@@ -3183,6 +3240,7 @@
     save: saveFtaData,
     load: loadFtaData,
     clear: clearFtaData,
+    resetMemory: resetFtaMemory,
     importData: importData,
     bindEvents: bindEvents,
     aiCheckTopEvent: aiCheckTopEvent,

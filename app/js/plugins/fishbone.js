@@ -192,35 +192,56 @@
       fishboneData.savedAt = dataToSave.savedAt;
     }
 
-    // 1. 持久化到 IndexedDB
+    // 1. 持久化到 IndexedDB（检查返回值，dbPut 用 false 表示失败）
+    let pluginOk = true;
     try {
       if (typeof window.pluginSave === 'function') {
-        await window.pluginSave(_fbStorageKey(_capturedPid), JSON.parse(JSON.stringify(dataToSave)));
+        const result = await window.pluginSave(
+          _fbStorageKey(_capturedPid),
+          JSON.parse(JSON.stringify(dataToSave))
+        );
+        if (result === false) pluginOk = false;
       }
     } catch (e) {
       console.warn('Failed to save fishbone data:', e);
-      showToast('保存失败', 'error');
+      pluginOk = false;
     }
 
-    // 2. 同步到问题库（独立错误边界）
+    // 2. 同步到问题库（独立错误边界，但必须等待并检查结果）
+    let syncOk = true;
     try {
-      syncToProblemLibrary(_capturedPid, dataToSave);
+      syncOk = await syncToProblemLibrary(_capturedPid, dataToSave);
     } catch (e) {
       console.warn('Failed to sync fishbone data to problem library:', e);
+      syncOk = false;
+    }
+
+    // 3. 只有全部必需写入成功才报告"已保存"
+    if (pluginOk === false || syncOk === false) {
+      if (typeof window.setSaveStatus === 'function') {
+        window.setSaveStatus('鱼骨图保存失败，请重试');
+      }
+      if (typeof showToast === 'function') {
+        showToast('鱼骨图保存失败，数据可能未写入数据库', 'error');
+      }
+      return false;
     }
 
     // 4. 更新保存状态指示器
     if (typeof window.setSaveStatus === 'function') {
       window.setSaveStatus('鱼骨图已保存');
     }
+    return true;
   }
 
-  /** 同步鱼骨图数据到问题库 */
-  function syncToProblemLibrary(capturedPid, snapshotData) {
+  /** 同步鱼骨图数据到问题库
+   *  @returns {Promise<boolean>} 是否成功（无需同步时视为成功）
+   */
+  async function syncToProblemLibrary(capturedPid, snapshotData) {
     const sourceData = snapshotData || fishboneData;
     const problemText = (sourceData.problem || '').trim();
     const phenomenonText = (sourceData.phenomenon || '').trim();
-    if (!problemText) return;
+    if (!problemText) return true;
 
     // P0: 使用调用时捕获的 PID，而非运行时读取（防止 debounce 窗口内切问题导致串号）
     let activeId = capturedPid ||
@@ -251,24 +272,26 @@
       }
     }
 
-    if (!activeId || typeof window.updateProblem !== 'function') return;
+    if (!activeId || typeof window.updateProblem !== 'function') return true;
 
     const problem =
       typeof window.getProblemById === 'function' ? window.getProblemById(activeId) : null;
-    if (!problem) return;
+    if (!problem) return true;
 
-    const snapshot = problem.snapshot || { version: 2 };
+    // 复制后再修改：直接改缓存记录里的 snapshot/details/analyses 会让
+    // 保存失败时的回滚拿到"已被改过"的旧值。
+    const snapshot = JSON.parse(JSON.stringify(problem.snapshot || { version: 2 }));
     snapshot.fishboneData = JSON.parse(JSON.stringify(sourceData));
 
     // 只在鱼骨图表单的「问题现象」字段有内容时才同步回问题库
     // 绝不用鱼头标题（problemText）覆盖现象描述字段
-    const details = problem.details || {};
+    const details = { ...(problem.details || {}) };
     if (phenomenonText) {
       details.phenomenon = phenomenonText;
     }
 
     // 标记 analyses.fishbone 的状态
-    const analyses = problem.analyses || {};
+    const analyses = JSON.parse(JSON.stringify(problem.analyses || {}));
     let hasCauses = false;
     Object.values(sourceData.categories || {}).forEach((arr) => {
       if (arr && arr.length > 0) hasCauses = true;
@@ -301,11 +324,14 @@
       updatePayload.problemStatement = phenomenonText;
     }
 
-    window.updateProblem(activeId, updatePayload);
+    const ok = await window.updateProblem(activeId, updatePayload);
 
-    // 如果在问题列表/工作台视图，通知刷新
-    if (typeof window.renderProblemList === 'function') window.renderProblemList();
-    if (typeof window.renderAnalysisHub === 'function') window.renderAnalysisHub();
+    // 如果在问题列表/工作台视图，通知刷新（成功后）
+    if (ok !== false) {
+      if (typeof window.renderProblemList === 'function') window.renderProblemList();
+      if (typeof window.renderAnalysisHub === 'function') window.renderAnalysisHub();
+    }
+    return ok !== false;
   }
 
   /** 从 IndexedDB 加载（含 localStorage 迁移兜底） */

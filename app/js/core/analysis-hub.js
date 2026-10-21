@@ -351,8 +351,8 @@ function _launchAnalysisFromCard(problemId, methodKey) {
   const problem = getProblemById(problemId);
   if (!problem) return;
 
-  // 更新分析状态
-  const analyses = problem.analyses || {};
+  // 更新分析状态（复制后再改，避免就地修改缓存记录影响保存失败回滚）
+  const analyses = { ...(problem.analyses || {}) };
   if (!analyses[methodKey] || analyses[methodKey].status === 'not_started') {
     analyses[methodKey] = { status: 'in_progress', lastUpdated: new Date().toISOString() };
     updateProblem(problemId, { analyses: analyses, status: 'analyzing' });

@@ -1279,7 +1279,8 @@
           // Import associated reports via saveReportList for batch efficiency
           let importedReportCount = 0;
           if (reports.length > 0) {
-            const existingReports = _getReportLibrary();
+            // 复制数组：就地改写缓存数组会让保存失败时的回滚拿到已修改的"旧值"
+            const existingReports = _getReportLibrary().slice();
             const now = new Date().toISOString();
             reports.forEach((report) => {
               if (!report.id) return; // skip malformed entries

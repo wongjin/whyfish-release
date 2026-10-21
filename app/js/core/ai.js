@@ -836,7 +836,13 @@ async function fetchWithTimeout(url, options, providerName = '', timeoutMs = 180
 }
 
 // Call OpenAI-compatible API (DeepSeek, Custom)
-async function callOpenAICompatible(systemInstruction, userPrompt, json = true, maxTokens = 8192) {
+async function callOpenAICompatible(
+  systemInstruction,
+  userPrompt,
+  json = true,
+  maxTokens = 8192,
+  requestOptions = {}
+) {
   const cfg = PROVIDER_DEFS[activeProviderId];
   const curApiKey = getActiveApiKey();
   let url;
@@ -864,6 +870,9 @@ async function callOpenAICompatible(systemInstruction, userPrompt, json = true, 
   };
   if (json) {
     body.response_format = { type: 'json_object' };
+  }
+  if (activeProviderId === 'deepseek' && requestOptions.thinking === false) {
+    body.thinking = { type: 'disabled' };
   }
 
   const res = await fetchWithTimeout(
@@ -916,7 +925,21 @@ async function callOpenAICompatible(systemInstruction, userPrompt, json = true, 
         total: data.usage.total_tokens || 0
       }
     : null;
-  return { text: text || reasoning, reasoning, usage };
+  return {
+    text: text || reasoning,
+    reasoning,
+    usage,
+    finishReason: choices[0]?.finish_reason || ''
+  };
+}
+
+function createOutputTruncatedError(maxTokens, usage) {
+  const error = new Error(
+    `AI 输出达到 ${Number(maxTokens).toLocaleString()} tokens 上限，返回内容被截断；请缩短输入后重试`
+  );
+  error.code = 'AI_OUTPUT_TRUNCATED';
+  error.usage = usage || null;
+  return error;
 }
 
 /** Clean and parse JSON from AI response text */
@@ -1085,7 +1108,13 @@ function _showAiCompletion(elapsedMs, usage) {
 }
 
 // Unified AI call function - routes to correct provider
-async function callAI(systemInstruction, userPrompt, json = true, maxTokens = 8192) {
+async function callAI(
+  systemInstruction,
+  userPrompt,
+  json = true,
+  maxTokens = 8192,
+  requestOptions = {}
+) {
   if (!getActiveApiKey()) {
     showToast('未检测到 API Key，请点击右上角“设置”进行配置。', 'error');
     throw new Error('No API key');
@@ -1098,10 +1127,19 @@ async function callAI(systemInstruction, userPrompt, json = true, maxTokens = 81
   try {
     window.AICtrl.start();
     _started = true;
-    const result = await callOpenAICompatible(systemInstruction, userPrompt, json, maxTokens);
+    const result = await callOpenAICompatible(
+      systemInstruction,
+      userPrompt,
+      json,
+      maxTokens,
+      requestOptions
+    );
     window._lastAiUsage = result.usage || null;
     addTokenUsage(result.usage);
     _setReasoning(result.reasoning || '');
+    if (result.finishReason === 'length' || result.finishReason === 'max_tokens') {
+      throw createOutputTruncatedError(maxTokens, result.usage);
+    }
     if (json) return parseAIJson(result.text);
     return result.text;
   } finally {
@@ -1126,7 +1164,14 @@ async function callAIWithThinking(systemInstruction, userPrompt) {
 
 // ===== Streaming API (SSE) for real-time reasoning display =====
 
-async function callOpenAIStreaming(systemInstruction, userPrompt, callbacks, maxTokens = 8192, json = true) {
+async function callOpenAIStreaming(
+  systemInstruction,
+  userPrompt,
+  callbacks,
+  maxTokens = 8192,
+  json = true,
+  requestOptions = {}
+) {
   if (!getActiveApiKey()) {
     showToast('未检测到 API Key，请点击右上角"设置"进行配置。', 'error');
     throw new Error('No API key');
@@ -1136,13 +1181,27 @@ async function callOpenAIStreaming(systemInstruction, userPrompt, callbacks, max
   // P0-3: 与 callAI 对齐的流控入口，防止并发 AI 请求
   window.AICtrl.start();
   try {
-    return await _callOpenAIStreamingInner(systemInstruction, userPrompt, callbacks, maxTokens, json);
+    return await _callOpenAIStreamingInner(
+      systemInstruction,
+      userPrompt,
+      callbacks,
+      maxTokens,
+      json,
+      requestOptions
+    );
   } finally {
     window.AICtrl.finish();
   }
 }
 
-async function _callOpenAIStreamingInner(systemInstruction, userPrompt, callbacks, maxTokens, json = true) {
+async function _callOpenAIStreamingInner(
+  systemInstruction,
+  userPrompt,
+  callbacks,
+  maxTokens,
+  json = true,
+  requestOptions = {}
+) {
   const { onReasoning } = callbacks || {};
   const cfg = PROVIDER_DEFS[activeProviderId];
   const curApiKey = getActiveApiKey();
@@ -1171,6 +1230,9 @@ async function _callOpenAIStreamingInner(systemInstruction, userPrompt, callback
   };
   if (json) {
     body.response_format = { type: 'json_object' };
+  }
+  if (activeProviderId === 'deepseek' && requestOptions.thinking === false) {
+    body.thinking = { type: 'disabled' };
   }
 
   const res = await fetchWithTimeout(
@@ -1204,6 +1266,7 @@ async function _callOpenAIStreamingInner(systemInstruction, userPrompt, callback
   let fullContent = '';
   let fullReasoning = '';
   let usage = null;
+  let finishReason = '';
   // H2: Guard against unbounded buffer growth from malicious/abnormal SSE endpoints
   const MAX_SSE_BUFFER_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -1273,7 +1336,11 @@ async function _callOpenAIStreamingInner(systemInstruction, userPrompt, callback
             total: parsed.usage.total_tokens || 0
           };
         }
-        if (parsed.choices?.[0]?.finish_reason === 'stop') {
+        const chunkFinishReason = parsed.choices?.[0]?.finish_reason;
+        if (chunkFinishReason) {
+          finishReason = chunkFinishReason;
+        }
+        if (chunkFinishReason) {
           streamDone = true;
           break;
         }
@@ -1285,7 +1352,10 @@ async function _callOpenAIStreamingInner(systemInstruction, userPrompt, callback
 
   if (usage) addTokenUsage(usage);
   window._lastAiUsage = usage;
-  return { text: fullContent, reasoning: fullReasoning, usage };
+  if (finishReason === 'length' || finishReason === 'max_tokens') {
+    throw createOutputTruncatedError(maxTokens, usage);
+  }
+  return { text: fullContent, reasoning: fullReasoning, usage, finishReason };
 }
 
 // ===== Auto-Analysis with CoT =====

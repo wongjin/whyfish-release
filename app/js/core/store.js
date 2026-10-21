@@ -142,6 +142,7 @@ function _setSaveDone(label) {
 /** 取消待处理的 autoSave，防止切换问题时写入过时数据 */
 window.flushAutoSave = function () {
   clearTimeout(_autoSaveTimer);
+  _pendingSessionSave = null;
   window.Store._saveGeneration++;
 };
 
@@ -225,7 +226,8 @@ function markAnalysisCompleted(methodKey, problemId) {
   if (!targetId) return;
   const problem = getProblemById(targetId);
   if (!problem) return;
-  const analyses = problem.analyses || {};
+  // 复制后再改：避免就地修改缓存记录的 analyses，保存失败时无法回滚
+  const analyses = { ...(problem.analyses || {}) };
   analyses[methodKey] = { status: 'completed', lastUpdated: new Date().toISOString() };
   updateProblem(targetId, {
     analyses: analyses,
@@ -404,6 +406,13 @@ const STORE_REPORTS = 'reports';
 const STORE_PLUGIN_DATA = 'plugin_data';
 
 // _db, _dbReady, _problemsCache, _reportsCache, _activeStateCache are now in window.Store
+
+// 上次成功写入 IndexedDB 的记录索引（id -> 记录引用）。
+// 保存时只写引用变化/新增的记录、只删已从列表移除的记录，避免整库 clear+put
+// （既放大写入，也会用本标签页的旧缓存删掉其他标签页新建的记录）。
+// 记录必须以不可变方式更新（替换对象而非就地改字段），引用比较才成立。
+let _problemsPersisted = new Map();
+let _reportsPersisted = new Map();
 
 // R1: BroadcastChannel for cross-tab IndexedDB coordination
 const _tabChannel =
@@ -588,6 +597,10 @@ async function dbGet(storeName, key) {
 async function _loadCache() {
   _problemsCache = await dbGetAll(STORE_PROBLEMS);
   _reportsCache = await dbGetAll(STORE_REPORTS);
+  _problemsPersisted = new Map(
+    _problemsCache.filter((p) => p && p.id).map((p) => [p.id, p])
+  );
+  _reportsPersisted = new Map(_reportsCache.filter((r) => r && r.id).map((r) => [r.id, r]));
   // 5 Whys 数据由 FiveWhys.load() 按需加载，不在此预取
   console.log(
     `[DB] Caches loaded. Problems: ${_problemsCache.length}, Reports: ${_reportsCache.length}`
@@ -650,97 +663,135 @@ function getStorageUsage() {
   };
 }
 
+// 当前内存会话（5 Whys 树等）所属的问题 ID；用于判断是否需要重新加载
+let _sessionProblemId = null;
+window.getSessionProblemId = () => _sessionProblemId;
+
+// 最近一次 autoSave 捕获的会话状态；显式切换/关闭前可立即落盘，避免丢失最后一次编辑
+let _pendingSessionSave = null;
+
+function _captureSessionSave() {
+  return {
+    pid: _activeProblemId,
+    tree: tree ? JSON.parse(JSON.stringify(tree)) : null,
+    nextId: nextId,
+    problemStatement: problemStatement,
+    problemContext: problemContext,
+    causalValidationResults: causalValidationResults
+      ? JSON.parse(JSON.stringify(causalValidationResults))
+      : {},
+    consolidatedRootCauses: consolidatedRootCauses
+      ? JSON.parse(JSON.stringify(consolidatedRootCauses))
+      : null,
+    analysisStartTime: analysisStartTime
+  };
+}
+
+async function _persistSessionSave(captured, gen) {
+  if (gen != null && gen !== window.Store._saveGeneration) {
+    console.log('[autoSave] Cancelled because of new generation');
+    return false;
+  }
+  if (!captured || !captured.tree) return false;
+  // P1-4: 没有活动问题时，不写入 base key，避免污染降级迁移路径
+  if (!captured.pid) return false;
+
+  const savedAtPid = captured.pid;
+  // Check if the problem still exists in the list (guard against deleted problems re-creating IDB/snapshot records)
+  const problems = getProblemList();
+  const p = problems.find((p) => p.id === savedAtPid);
+  if (!p) return false;
+  if (p._fromExample) return false; // Guard: do not auto-save tree to active DB or snapshot for example problems
+
+  const activeState = {
+    version: SCHEMA_VERSION,
+    tree: captured.tree,
+    nextId: captured.nextId,
+    problemStatement: captured.problemStatement,
+    problemContext: captured.problemContext,
+    causalValidationResults: captured.causalValidationResults,
+    consolidatedRootCauses: captured.consolidatedRootCauses,
+    analysisStartTime: captured.analysisStartTime,
+    savedAt: new Date().toISOString()
+  };
+  if (gen != null && gen !== window.Store._saveGeneration) return false;
+  _activeStateCache = activeState;
+  const key = 'qa-5why-data-' + savedAtPid;
+
+  // P1-5: 先写 plugin 数据，成功后再更新问题列表快照
+  const saveOk = await pluginSave(key, activeState);
+  if (saveOk === false) {
+    console.warn('[autoSave] pluginSave failed — skipping problem list update');
+    _setSaveDone((_getActiveToolLabel() || '5Whys') + ' 保存失败');
+    return false;
+  }
+  // saveOk === undefined 时表示 DB 未初始化（离线首屏），仍继续同步问题列表
+
+  // 同步将当前分析树更新到问题库的 snapshot 中，防止跨问题切换时数据丢失。
+  // 记录以不可变方式替换，保证记录级增量写入能识别变化、回滚也能拿到真实旧值。
+  if (savedAtPid) {
+    // P0-1 修复：pluginSave 已落盘后，snapshot 必须配对写入。
+    const latest = getProblemList();
+    const index = latest.findIndex((p) => p.id === savedAtPid);
+    if (index >= 0) {
+      const record = latest[index];
+      const nextSnapshot = {
+        ...(record.snapshot || {}),
+        version: SCHEMA_VERSION,
+        tree: captured.tree,
+        nextId: captured.nextId,
+        causalValidationResults: captured.causalValidationResults,
+        consolidatedRootCauses: captured.consolidatedRootCauses,
+        analysisStartTime: captured.analysisStartTime,
+        problemStatement: captured.problemStatement,
+        problemContext: captured.problemContext,
+        exportedAt: new Date().toISOString()
+      };
+      const counts = calculateCountsFromSnapshot(nextSnapshot);
+      const nextProblems = latest.slice();
+      nextProblems[index] = {
+        ...record,
+        snapshot: nextSnapshot,
+        nodeCount: counts.nodeCount,
+        rootCauseCount: counts.rootCauseCount
+      };
+      await saveProblemList(nextProblems);
+    }
+  }
+
+  _setSaveDone((_getActiveToolLabel() || '5Whys') + ' 已保存');
+  return true;
+}
+
 function autoSave() {
   clearTimeout(_autoSaveTimer);
 
   // Capture current problem ID and deep copies of state variables to prevent cross-contamination
-  const savedAtPid = _activeProblemId;
-  const capturedTree = tree ? JSON.parse(JSON.stringify(tree)) : null;
-  const capturedNextId = nextId;
-  const capturedStmt = problemStatement;
-  const capturedCtx = problemContext;
-  const capturedValidation = causalValidationResults
-    ? JSON.parse(JSON.stringify(causalValidationResults))
-    : {};
-  const capturedRootCauses = consolidatedRootCauses
-    ? JSON.parse(JSON.stringify(consolidatedRootCauses))
-    : null;
-  const capturedStartTime = analysisStartTime;
+  const captured = _captureSessionSave();
+  if (!captured.tree || !captured.pid) return;
+  _pendingSessionSave = captured;
 
   const currentGen = ++window.Store._saveGeneration;
 
   _autoSaveTimer = setTimeout(async () => {
-    if (currentGen !== window.Store._saveGeneration) {
-      console.log('[autoSave] Cancelled because of new generation');
-      return;
-    }
-    if (!capturedTree) return;
-    // P1-4: 没有活动问题时，不写入 base key，避免污染降级迁移路径
-    if (!savedAtPid) return;
-
-    // Check if the problem still exists in the list (guard against deleted problems re-creating IDB/snapshot records)
-    const problems = getProblemList();
-    const p = problems.find((p) => p.id === savedAtPid);
-    if (!p) return;
-    if (p._fromExample) return; // Guard: do not auto-save tree to active DB or snapshot for example problems
-
-    const activeState = {
-      version: SCHEMA_VERSION,
-      tree: capturedTree,
-      nextId: capturedNextId,
-      problemStatement: capturedStmt,
-      problemContext: capturedCtx,
-      causalValidationResults: capturedValidation,
-      consolidatedRootCauses: capturedRootCauses,
-      analysisStartTime: capturedStartTime,
-      savedAt: new Date().toISOString()
-    };
-    if (currentGen !== window.Store._saveGeneration) return;
-    _activeStateCache = activeState;
-    const key = 'qa-5why-data-' + savedAtPid;
-
-    // P1-5: 先写 plugin 数据，成功后再更新问题列表快照
-    // 即使此时 gen 已被后续 autoSave 递增，也只改当前 savedAtPid 的条目，
-    // 不影响最新问题的状态。保留 saveOk 错误检查即可。
-    const saveOk = await pluginSave(key, activeState);
-    if (saveOk === false) {
-      console.warn('[autoSave] pluginSave failed — skipping problem list update');
-      _setSaveDone((_getActiveToolLabel() || '5Whys') + ' 保存失败');
-      return;
-    }
-    // saveOk === undefined 时表示 DB 未初始化（离线首屏），仍继续同步问题列表
-
-    // 同步将当前分析树更新到问题库的 snapshot 中，防止跨问题切换时数据丢失
-    if (savedAtPid) {
-      // P0-1 修复：pluginSave 已落盘后，snapshot 必须配对写入。
-      // 此前 557/562 行的 generation bail 会在用户切换问题时跳过 snapshot 写入，
-      // 导致 plugin 数据比 snapshot 新（fishbone 无 heal 路径，下次加载时数据不一致）。
-      const problems = getProblemList();
-      const index = problems.findIndex((p) => p.id === savedAtPid);
-      if (index >= 0) {
-        const snap = problems[index].snapshot || {};
-        problems[index].snapshot = {
-          ...snap,
-          version: SCHEMA_VERSION,
-          tree: capturedTree,
-          nextId: capturedNextId,
-          causalValidationResults: capturedValidation,
-          consolidatedRootCauses: capturedRootCauses,
-          analysisStartTime: capturedStartTime,
-          problemStatement: capturedStmt,
-          problemContext: capturedCtx,
-          exportedAt: new Date().toISOString()
-        };
-        const counts = calculateCountsFromSnapshot(problems[index].snapshot);
-        problems[index].nodeCount = counts.nodeCount;
-        problems[index].rootCauseCount = counts.rootCauseCount;
-        await saveProblemList(problems);
-      }
-    }
-
-    _setSaveDone((_getActiveToolLabel() || '5Whys') + ' 已保存');
+    if (_pendingSessionSave === captured) _pendingSessionSave = null;
+    await _persistSessionSave(captured, currentGen);
   }, 300);
 }
+
+/**
+ * 立即写入待保存的会话状态（切换工具/问题前调用）。
+ * 与 flushAutoSave 不同，这会真正落盘而不是丢弃待保存数据。
+ * @returns {Promise<boolean>}
+ */
+window.saveActiveSessionNow = function () {
+  const pending = _pendingSessionSave;
+  clearTimeout(_autoSaveTimer);
+  _pendingSessionSave = null;
+  window.Store._saveGeneration++;
+  if (!pending) return Promise.resolve(true);
+  return _persistSessionSave(pending, null);
+};
 
 function _getActiveToolLabel() {
   const activeTool = document.querySelector('.tool-panel:not(.hidden)')?.id;
@@ -768,6 +819,8 @@ function autoRestore() {
     consolidatedRootCauses = state.consolidatedRootCauses || null;
     analysisStartTime = state.analysisStartTime || null;
     rebuildNodeIndex();
+    // 标记内存会话已属于当前活动问题，避免切换工具时再用旧快照覆盖
+    _sessionProblemId = _activeProblemId || null;
     return true;
   } catch (e) {
     console.warn('AutoRestore failed:', e);
@@ -777,6 +830,8 @@ function autoRestore() {
 
 async function clearSavedAnalysis(problemId = _activeProblemId) {
   _activeStateCache = null;
+  _pendingSessionSave = null;
+  _sessionProblemId = null;
   const key = problemId ? 'qa-5why-data-' + problemId : 'qa-5why-data';
   // P1-21: 返回 pluginRemove 结果，让调用方能在失败时提示用户
   // 失败时旧 snapshot 残留 IDB，重访该问题会复活已重置的数据
@@ -878,6 +933,7 @@ window.FiveWhys = {
       },
       'clear'
     );
+    _sessionProblemId = null;
     const titleEl = document.getElementById('analysisProblemTitle');
     if (titleEl) titleEl.value = '';
     const stmtEl = document.getElementById('problemStatement');
@@ -1506,7 +1562,8 @@ function nextReportVersion(currentVersion, isRegenerate = false) {
  */
 async function saveReportToLibrary(reportContent, options = {}) {
   try {
-    const reports = getReportLibrary();
+    // 复制数组：就地改写缓存数组会让保存失败时的回滚拿到已修改的"旧值"
+    const reports = getReportLibrary().slice();
     const now = new Date().toISOString();
     const hasOption = (key) => Object.prototype.hasOwnProperty.call(options, key);
 
@@ -1664,9 +1721,10 @@ async function saveReportToLibrary(reportContent, options = {}) {
   }
 }
 
-/** 批量保存报告列表（原子事务）
- *  Cache 同步突变以支持紧接的同步读取；事务失败时回滚 cache 到调用前状态，
- *  防止内存与 IDB 不一致导致下次 reload 数据丢失（P1-16）。 */
+/** 批量保存报告列表（记录级事务）
+ *  Cache 同步突变以支持紧接的同步读取；仅写入新增/变化的记录、删除已移除的记录，
+ *  不再 clear 整库（避免写入放大和跨标签页覆盖）。
+ *  事务失败时回滚 cache 到调用前状态，防止内存与 IDB 不一致（P1-16）。 */
 function saveReportList(reports) {
   const prevCache = _reportsCache;
   _reportsCache = reports;
@@ -1676,13 +1734,34 @@ function saveReportList(reports) {
       return;
     }
     try {
+      const nextById = new Map();
+      for (const rep of reports) {
+        if (rep && rep.id) nextById.set(rep.id, rep);
+      }
+      const toPut = [];
+      for (const [id, rep] of nextById) {
+        if (_reportsPersisted.get(id) !== rep) toPut.push(rep);
+      }
+      // 只删本次调用方原本持有、现在已移除的记录，避免误删其他标签页的新报告
+      const prevIds = new Set(
+        (prevCache || []).filter((r) => r && r.id).map((r) => r.id)
+      );
+      const toDelete = [];
+      for (const id of prevIds) {
+        if (!nextById.has(id)) toDelete.push(id);
+      }
+
+      if (toPut.length === 0 && toDelete.length === 0) {
+        resolve(true);
+        return;
+      }
+
       const tx = _db.transaction(STORE_REPORTS, 'readwrite');
       const store = tx.objectStore(STORE_REPORTS);
-      store.clear();
-      for (const rep of reports) {
-        if (rep && rep.id) store.put(rep);
-      }
+      for (const id of toDelete) store.delete(id);
+      for (const rep of toPut) store.put(rep);
       tx.oncomplete = () => {
+        _reportsPersisted = nextById;
         _broadcastDbUpdate();
         if (typeof emit === 'function') emit('reports:changed', { reports: _reportsCache });
         resolve(true);
@@ -1926,37 +2005,61 @@ function saveProblemList(problems) {
 
 function _doSaveProblemList(resolve, prevCache, problems) {
   try {
-      const tx = _db.transaction(STORE_PROBLEMS, 'readwrite');
-      const store = tx.objectStore(STORE_PROBLEMS);
-      store.clear();
-      for (const prob of problems) {
-        if (prob && prob.id) store.put(prob);
-      }
-      tx.oncomplete = () => {
-        _broadcastDbUpdate();
-        resolve(true);
-      };
-      tx.onerror = (evt) => {
-        const error = tx.error || evt.target.error;
-        console.warn('Save problem list transaction error:', error);
-        _problemsCache = prevCache; // 回滚：事务失败，恢复调用前 cache
-        if (
-          error &&
-          (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED')
-        ) {
-          if (typeof emit === 'function') emit('storage:quota_exceeded');
-        }
-        resolve(false);
-      };
-      tx.onabort = () => {
-        _problemsCache = prevCache;
-        resolve(false);
-      };
-    } catch (e) {
-      console.warn('Save problem list failed:', e);
-      _problemsCache = prevCache; // 同步异常也回滚
-      resolve(false);
+    const nextById = new Map();
+    for (const prob of problems) {
+      if (prob && prob.id) nextById.set(prob.id, prob);
     }
+    // 只写新增或引用发生变化的记录（调用方用不可变方式更新记录）
+    const toPut = [];
+    for (const [id, prob] of nextById) {
+      if (_problemsPersisted.get(id) !== prob) toPut.push(prob);
+    }
+    // 只删「本次调用方原本持有、现在已移除」的记录。
+    // 用 prevCache 而不是持久化索引判断，避免用本标签页的旧缓存推断全库内容，
+    // 从而误删其他标签页新建的记录。
+    const prevIds = new Set(
+      (prevCache || []).filter((p) => p && p.id).map((p) => p.id)
+    );
+    const toDelete = [];
+    for (const id of prevIds) {
+      if (!nextById.has(id)) toDelete.push(id);
+    }
+
+    if (toPut.length === 0 && toDelete.length === 0) {
+      resolve(true);
+      return;
+    }
+
+    const tx = _db.transaction(STORE_PROBLEMS, 'readwrite');
+    const store = tx.objectStore(STORE_PROBLEMS);
+    for (const id of toDelete) store.delete(id);
+    for (const prob of toPut) store.put(prob);
+    tx.oncomplete = () => {
+      _problemsPersisted = nextById;
+      _broadcastDbUpdate();
+      resolve(true);
+    };
+    tx.onerror = (evt) => {
+      const error = tx.error || evt.target.error;
+      console.warn('Save problem list transaction error:', error);
+      _problemsCache = prevCache; // 回滚：事务失败，恢复调用前 cache
+      if (
+        error &&
+        (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED')
+      ) {
+        if (typeof emit === 'function') emit('storage:quota_exceeded');
+      }
+      resolve(false);
+    };
+    tx.onabort = () => {
+      _problemsCache = prevCache;
+      resolve(false);
+    };
+  } catch (e) {
+    console.warn('Save problem list failed:', e);
+    _problemsCache = prevCache; // 同步异常也回滚
+    resolve(false);
+  }
 }
 
 /**
@@ -1996,8 +2099,9 @@ function createNewProblem(options = {}) {
     snapshot: null // 完整的分析快照
   };
 
-  problems.unshift(problem);
-  saveProblemList(problems).then((ok) => {
+  // 不可变更新：新数组 + 新记录对象，保证保存失败时 prevCache 仍持有旧值
+  const nextProblems = [problem, ...problems];
+  saveProblemList(nextProblems).then((ok) => {
     if (ok === false) {
       showToast('问题持久化失败（存储空间不足或数据库不可用），刷新后数据可能丢失', 'warning');
     }
@@ -2033,8 +2137,10 @@ function updateProblem(problemId, updates) {
     merged.rootCauseCount = counts.rootCauseCount;
   }
 
-  problems[index] = merged;
-  return saveProblemList(problems);
+  // 不可变更新：不改写缓存中的旧记录，事务失败时才能回滚到真实旧值
+  const nextProblems = problems.slice();
+  nextProblems[index] = merged;
+  return saveProblemList(nextProblems);
 }
 
 /**
@@ -2055,12 +2161,16 @@ function upsertProblem(problem) {
   const problems = getProblemList();
   const index = problems.findIndex((p) => p.id === problem.id);
   const now = new Date().toISOString();
+  // 不可变更新：新数组 + 新记录对象，保存失败时保持旧缓存
+  const nextProblems = problems.slice();
   if (index >= 0) {
-    problems[index] = { ...problems[index], ...problem, updatedAt: now };
+    nextProblems[index] = { ...problems[index], ...problem, updatedAt: now };
+    // 外部覆写会影响该问题的持久化内容，下一次加载必须重新读取
+    if (_sessionProblemId === problem.id) _sessionProblemId = null;
   } else {
-    problems.push({ ...problem, updatedAt: now });
+    nextProblems.push({ ...problem, updatedAt: now });
   }
-  return saveProblemList(problems);
+  return saveProblemList(nextProblems);
 }
 
 /**
@@ -2082,6 +2192,10 @@ async function deleteProblem(problemId) {
   problems = problems.filter((p) => p.id !== problemId);
   const problemSaveOk = await saveProblemList(problems);
   if (!problemSaveOk) return false;
+  if (_sessionProblemId === problemId) {
+    _sessionProblemId = null;
+    _pendingSessionSave = null;
+  }
 
   return problems.length < originalLength;
 }
@@ -2175,7 +2289,8 @@ function saveCurrentAnalysisToProblem(problemId, title, silent = false, options 
   // 统一计算快照中的节点数 and 根因数
   const counts = calculateCountsFromSnapshot(snapshot);
 
-  problems[index] = {
+  const nextProblems = problems.slice();
+  nextProblems[index] = {
     ...problems[index],
     title: title !== undefined && title !== null ? title : problems[index].title,
     problemStatement: isActiveMatch ? problemStatement : problems[index].problemStatement || '',
@@ -2189,7 +2304,7 @@ function saveCurrentAnalysisToProblem(problemId, title, silent = false, options 
     updatedAt: new Date().toISOString()
   };
 
-  saveProblemList(problems).then((ok) => {
+  saveProblemList(nextProblems).then((ok) => {
     if (ok === false) {
       showToast('分析数据持久化失败（存储空间不足或数据库不可用），刷新后数据可能丢失', 'warning');
     }
@@ -2208,6 +2323,23 @@ function saveCurrentAnalysisToProblem(problemId, title, silent = false, options 
 function loadProblemToCurrent(problemId, onLoaded) {
   const problem = getProblemById(problemId);
   if (!problem) return false;
+
+  // 该问题已有内存会话（或存在尚未落盘的编辑）：直接复用，不能从旧快照重新加载。
+  // 重新加载会用快照覆盖最后一次编辑，touchMany 还会取消刚安排的保存。
+  const _hasLiveSession =
+    _sessionProblemId === problemId ||
+    (_pendingSessionSave && _pendingSessionSave.pid === problemId);
+  if (_hasLiveSession) {
+    window.saveActiveSessionNow();
+    if (typeof onLoaded === 'function') onLoaded(problemId);
+    return true;
+  }
+
+  // 切换到另一个问题前，把尚未到 300ms 的编辑立即落盘（写入归属仍是被捕获的原问题），
+  // 否则下面的 touchMany 会递增 generation 直接丢弃待保存数据。
+  if (_sessionProblemId && _sessionProblemId !== problemId) {
+    window.saveActiveSessionNow();
+  }
 
   // 用户启动/继续分析此问题，清除示例标记，转为普通分析会话
   if (problem._fromExample) {
@@ -2240,18 +2372,30 @@ function loadProblemToCurrent(problemId, onLoaded) {
     );
     rebuildNodeIndex();
   } else {
-    // 没有 tree 快照时，只恢复描述并创建根节点
+    // 没有 tree 快照：先完整构造本问题的会话状态，再一次性切换。
+    // 不能只替换描述——那样 touchMany 触发的 autoSave 会把上一个问题残留的
+    // tree / 因果校验 / 归并结果当作本问题的数据保存。
+    nextId = 1;
+    const freshTree = createNode(currentStmt, null, 1);
+    freshTree.parentId = null;
     touchMany(
       {
         problemStatement: currentStmt,
-        problemContext: problem.problemContext || ''
+        problemContext: problem.problemContext || '',
+        tree: freshTree,
+        nextId: 2,
+        causalValidationResults: {},
+        consolidatedRootCauses: null,
+        analysisStartTime: null,
+        reportMarkdown: '',
+        cachedReport: null,
+        cachedTreeHash: ''
       },
       'loadProblem'
     );
-    tree = createNode(currentStmt, null, 1);
-    tree.parentId = null;
-    nextId = 2;
+    rebuildNodeIndex();
   }
+  _sessionProblemId = problemId;
 
   if (snapshot.details && window.ProblemManager) {
     window.ProblemManager.load(snapshot.details);
@@ -2264,18 +2408,25 @@ function loadProblemToCurrent(problemId, onLoaded) {
   // P0-1-2nd: 异步加载完成回调 — 让 _launchAnalysisFromCard 等调用方可等 IDB 恢复完再同步 DOM
   //
   // _loadPending / _callOnLoaded 协定:
-  // - 每个需要异步恢复的插件区块，走异步分支时 ++_loadPending，
-  //   在回调中必须调 _callOnLoaded()（成功/失败路径都需要）。
-  // - 走同步分支（有快照数据但无需 IDB 读取）不碰 _loadPending，
-  //   也不调 _callOnLoaded（让后续区块或底部 L2110 兜底调一次）。
-  // - _loadedCalled 守卫确保最多只调一次回调。
+  // - 每个需要异步恢复的插件区块，走异步分支时调 _beginLoad()，
+  //   在回调中必须调 _endLoad()（成功/失败/提前返回路径都需要）。
+  // - 走同步分支（有快照数据但无需 IDB 读取）不碰计数，也不调回调
+  //   （让后续区块或底部兜底调一次）。
+  // - 计数归零才触发 onLoaded，保证所有模块都恢复完；_loadedCalled 保证最多一次。
   // - 新增异步插件必须遵循此协定，否则 onLoaded 可能永不触发。
   let _loadPending = 0;
   let _loadedCalled = false;
   const _callOnLoaded = () => {
-    if (_loadedCalled) return;
+    if (_loadedCalled || _loadPending > 0) return;
     _loadedCalled = true;
     if (typeof onLoaded === 'function') onLoaded(problemId);
+  };
+  const _beginLoad = () => {
+    _loadPending++;
+  };
+  const _endLoad = () => {
+    if (_loadPending > 0) _loadPending--;
+    _callOnLoaded();
   };
 
   // 恢复鱼骨图数据
@@ -2296,7 +2447,7 @@ function loadProblemToCurrent(problemId, onLoaded) {
       pluginSave(_fbKey, JSON.parse(JSON.stringify(window.Fishbone.fishboneData)));
     } else {
       // 异步检测 IDB：不先同步设置空数据，避免 async callback 覆盖用户在此期间的编辑
-      _loadPending++;
+      _beginLoad();
       pluginLoad(_fbKey)
         .then((dbFb) => {
           // P1-2: 异步回调守卫——如果用户已切换到其他问题，不覆盖数据
@@ -2313,12 +2464,20 @@ function loadProblemToCurrent(problemId, onLoaded) {
             }
             window.Fishbone.fishboneData.importedContext = buildProblemContext(problem);
             // P0-1-2nd: 自动修复快照中的缺失引用 (heal)，与 FTA heal 路径对齐
+            // 不可变替换记录，保证记录级增量写入能识别变化、回滚有真实旧值
             const problems = getProblemList();
             const idx = problems.findIndex((p) => p.id === problemId);
             if (idx !== -1) {
-              problems[idx].snapshot = problems[idx].snapshot || { version: SCHEMA_VERSION };
-              problems[idx].snapshot.fishboneData = JSON.parse(JSON.stringify(dbFb));
-              saveProblemList(problems);
+              const record = problems[idx];
+              const nextProblems = problems.slice();
+              nextProblems[idx] = {
+                ...record,
+                snapshot: {
+                  ...(record.snapshot || { version: SCHEMA_VERSION }),
+                  fishboneData: JSON.parse(JSON.stringify(dbFb))
+                }
+              };
+              saveProblemList(nextProblems);
             }
           } else if (window.Fishbone) {
             const emptyFb = {
@@ -2334,12 +2493,11 @@ function loadProblemToCurrent(problemId, onLoaded) {
             window.Fishbone.fishboneData = emptyFb;
             pluginSave(_fbKey, JSON.parse(JSON.stringify(window.Fishbone.fishboneData)));
           }
-          _callOnLoaded();
         })
         .catch((e) => {
           console.warn('[IDB] pluginLoad for Fishbone failed:', e);
-          _callOnLoaded();
-        });
+        })
+        .finally(_endLoad);
     }
   }
 
@@ -2358,22 +2516,26 @@ function loadProblemToCurrent(problemId, onLoaded) {
       if (ftaClone.topEvent && !ftaClone.topEvent.name) {
         ftaClone.topEvent.name = problem.title || '';
       }
-      // P1-4: importData 是 async，loadProblemToCurrent 是 sync 函数无法 await，增加 _loadPending 回调控制避免竞态条件
-      _loadPending++;
-      const _r1 = window.FTA.importData(ftaClone);
-      if (_r1 && typeof _r1.then === 'function') {
-        _r1.then(() => _callOnLoaded())
-           .catch((e) => {
-             console.warn('FTA importData failed during loadProblemToCurrent:', e);
-             _callOnLoaded();
-           });
-      } else {
-        _loadPending--;
+      // P1-4: importData 是 async，loadProblemToCurrent 是 sync 函数无法 await，
+      // 用 _beginLoad/_endLoad 计数保证所有模块恢复完才触发 onLoaded。
+      _beginLoad();
+      try {
+        Promise.resolve(window.FTA.importData(ftaClone))
+          .catch((e) => {
+            console.warn('FTA importData failed during loadProblemToCurrent:', e);
+          })
+          .finally(_endLoad);
+      } catch (e) {
+        console.warn('FTA importData failed during loadProblemToCurrent:', e);
+        _endLoad();
       }
     } else {
-      // 立即清空内存数据，防止旧数据残留
-      if (window.FTA && typeof window.FTA.clear === 'function') {
-        // P1-4: clear 是 async，用 .catch 兜底
+      // 只清空内存，绝不删除持久化数据：下面的 IDB 读取正是为了恢复它，
+      // 若先删除，所谓的"恢复路径"反而会把可恢复的故障树丢掉。
+      if (window.FTA && typeof window.FTA.resetMemory === 'function') {
+        window.FTA.resetMemory();
+      } else if (window.FTA && typeof window.FTA.clear === 'function') {
+        // 兼容旧版插件：clear 会删库并写空快照
         const _r2 = window.FTA.clear();
         if (_r2 && typeof _r2.catch === 'function') {
           _r2.catch((e) => console.warn('FTA clear failed during loadProblemToCurrent:', e));
@@ -2381,7 +2543,7 @@ function loadProblemToCurrent(problemId, onLoaded) {
       }
       // 异步检测 IDB，以防数据被误删
       const _ftaKey = problemId ? 'qa-fta-' + problemId : 'qa-fta';
-      _loadPending++;
+      _beginLoad();
       pluginLoad(_ftaKey)
         .then(async (dbFta) => {
           // P1-2: 异步回调守卫——如果用户已切换到其他问题，不覆盖数据
@@ -2404,21 +2566,27 @@ function loadProblemToCurrent(problemId, onLoaded) {
             // P1-4: .then 回调改 async，await importData
             await window.FTA.importData(ftaClone);
 
-            // 自动修复快照中的缺失引用 (heal)
+            // 自动修复快照中的缺失引用 (heal)，不可变替换记录
             const problems = getProblemList();
             const index = problems.findIndex((p) => p.id === problemId);
             if (index !== -1) {
-              problems[index].snapshot = problems[index].snapshot || { version: SCHEMA_VERSION };
-              problems[index].snapshot.ftaData = ftaClone;
-              saveProblemList(problems);
+              const record = problems[index];
+              const nextProblems = problems.slice();
+              nextProblems[index] = {
+                ...record,
+                snapshot: {
+                  ...(record.snapshot || { version: SCHEMA_VERSION }),
+                  ftaData: ftaClone
+                }
+              };
+              saveProblemList(nextProblems);
             }
           }
-          _callOnLoaded();
         })
         .catch((e) => {
           console.warn('[IDB] pluginLoad for FTA failed:', e);
-          _callOnLoaded();
-        });
+        })
+        .finally(_endLoad);
     }
   }
 

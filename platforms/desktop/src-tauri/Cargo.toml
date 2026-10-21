@@ -1,10 +1,10 @@
 [package]
 name = "whyfish"
-version = "0.2.1"
+version = "0.2.2"
 description = "WhyFish 问题分析与解决工具"
 authors = ["wongjin"]
 license = "MIT"
-repository = "https://github.com/wongjin/WhyFish"
+repository = "https://github.com/wongjin/whyfish-release"
 edition = "2021"
 rust-version = "1.77.2"
 

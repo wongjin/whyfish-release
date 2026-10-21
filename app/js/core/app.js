@@ -298,7 +298,7 @@ if (window.__appInitialized) {
         const p =
           typeof window.getProblemById === 'function' ? window.getProblemById(problem.id) : null;
         if (p) {
-          const analyses = p.analyses || {};
+          const analyses = { ...(p.analyses || {}) };
           if (!analyses['5why'] || analyses['5why'].status === 'not_started') {
             analyses['5why'] = { status: 'in_progress', lastUpdated: new Date().toISOString() };
             window.updateProblem(problem.id, { analyses: analyses, status: 'analyzing' });

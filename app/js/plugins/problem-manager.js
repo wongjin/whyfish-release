@@ -24,12 +24,12 @@
   );
 
   // C-09: 动态检测并安全调用 callAI 和 assertApiReady
-  const _callAI = (sys, user, json, maxTokens) => {
+  const _callAI = (sys, user, json, maxTokens, requestOptions) => {
     if (typeof window.callAI === 'function') {
-      return window.callAI(sys, user, json, maxTokens);
+      return window.callAI(sys, user, json, maxTokens, requestOptions);
     }
     if (typeof callAI === 'function') {
-      return callAI(sys, user, json, maxTokens);
+      return callAI(sys, user, json, maxTokens, requestOptions);
     }
     throw new Error('AI API 调用模块未就绪，请稍后重试');
   };
@@ -52,6 +52,8 @@
 
   let isEvaluating = false;
 
+  const ASSESSMENT_MAX_TOKENS = 16384;
+  const ASSESSMENT_REQUEST_OPTIONS = { thinking: false };
   const ASSESSMENT_METHODS = ['5-why', 'fishbone', 'fta', 'none'];
   const ASSESSMENT_SUPPLEMENTARY_TOOLS = [
     '5w2h',
@@ -676,25 +678,58 @@
       // Call AI
       let raw;
       let reasoningStreamActive = false;
+      const isTauriDesktop = Boolean(window.__TAURI__?.core?.invoke);
       try {
-        const { text: streamContent } = await callOpenAIStreaming(sysPrompt, userPrompt, {
-          onReasoning: (_chunk, fullText) => {
-            if (!reasoningStreamActive) {
-              reasoningStreamActive = true;
-              window.SidebarUI?.showReasoningStream('模型推理输出', 'pmAssessmentReasoningContent');
-            }
-            window.SidebarUI?.updateReasoningStream('pmAssessmentReasoningContent', fullText);
-          }
-        });
-        raw = parseAIJson(streamContent);
+        if (isTauriDesktop) {
+          window.SidebarUI?.showLoading('正在以非流式模式评估...', null, true);
+          raw = await _callAI(
+            sysPrompt,
+            userPrompt,
+            true,
+            ASSESSMENT_MAX_TOKENS,
+            ASSESSMENT_REQUEST_OPTIONS
+          );
+        } else {
+          const { text: streamContent } = await callOpenAIStreaming(
+            sysPrompt,
+            userPrompt,
+            {
+              onReasoning: (_chunk, fullText) => {
+                if (!reasoningStreamActive) {
+                  reasoningStreamActive = true;
+                  window.SidebarUI?.showReasoningStream(
+                    '模型推理输出',
+                    'pmAssessmentReasoningContent'
+                  );
+                }
+                window.SidebarUI?.updateReasoningStream('pmAssessmentReasoningContent', fullText);
+              }
+            },
+            ASSESSMENT_MAX_TOKENS,
+            true,
+            ASSESSMENT_REQUEST_OPTIONS
+          );
+          raw = parseAIJson(streamContent);
+        }
       } catch (streamErr) {
-        if (streamErr.message === 'AI 分析已取消' || streamErr.message === 'ALREADY_IN_FLIGHT') {
+        if (
+          streamErr.message === 'AI 分析已取消' ||
+          streamErr.message === 'ALREADY_IN_FLIGHT' ||
+          streamErr.code === 'AI_OUTPUT_TRUNCATED' ||
+          isTauriDesktop
+        ) {
           throw streamErr;
         }
         console.warn('[PM] evaluate streaming failed, falling back:', streamErr.message);
         window.SidebarUI?.hideLoading();
         window.SidebarUI?.showLoading('正在以兼容模式评估...', null, true);
-        raw = await _callAI(sysPrompt, userPrompt, true);
+        raw = await _callAI(
+          sysPrompt,
+          userPrompt,
+          true,
+          ASSESSMENT_MAX_TOKENS,
+          ASSESSMENT_REQUEST_OPTIONS
+        );
       }
 
       // 校验活跃问题上下文，防止切换问题导致的张冠李戴
@@ -773,12 +808,18 @@
       resultEl.innerHTML =
         '<div class="pm-assessment-error"><span>❌</span><p class="error-message"></p></div>';
       resultEl.querySelector('.error-message').textContent = '评估失败：' + err.message;
-      // 在侧边栏展示思考过程（如存在）
+      // 在侧边栏展示失败状态和思考过程（如存在）
       if (window.SidebarUI) {
-        const errHtml = window.wrapWithThinking ? window.wrapWithThinking('') : '';
-        if (errHtml) {
-          window.SidebarUI.openContent('问题评估', errHtml);
-        }
+        let errHtml =
+          '<div class="ai-block is-error"><h4>评估失败</h4><p>' +
+          esc(err.message) +
+          '</p></div>';
+        errHtml = window.wrapWithThinking ? window.wrapWithThinking(errHtml) : errHtml;
+        window.SidebarUI.openContent('问题评估', errHtml, {
+          status: 'error',
+          message: '评估失败',
+          usage: window._lastAiUsage
+        });
       }
       showToast('评估失败: ' + err.message, 'error');
       return null;

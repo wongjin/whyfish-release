@@ -1389,8 +1389,6 @@ window.scheduleRedirect = function (options) {
     container.appendChild(_scheduledRedirectNode);
   }
 
-  function updateCountdown(remaining) {}
-
   function finishRedirect() {
     window.cancelScheduledRedirect();
     if (collapse && window.collapseSidebar) window.collapseSidebar();
@@ -1403,13 +1401,9 @@ window.scheduleRedirect = function (options) {
     if (onNavigate) setTimeout(onNavigate, 200);
   }
 
-  var remaining = seconds;
-  updateCountdown(remaining);
+  const deadline = performance.now() + seconds * 1000;
   _scheduledRedirectTimer = setInterval(function () {
-    remaining--;
-    if (remaining > 0) {
-      updateCountdown(remaining);
-    } else {
+    if (performance.now() >= deadline) {
       finishRedirect();
     }
   }, 1000);
